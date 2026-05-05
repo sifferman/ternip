@@ -272,16 +272,20 @@ always_comb begin
                 read_response_counter_d++;
                 if (read_response_counter_q % 2 == 0) begin // received vec1 read
                     vector1_r_data_d = vector_read_data_i;
-                end else if (read_response_counter_q % 2 == 1) begin // received vec2 read
-                    vector_request_valid_o = 1;
-                    vector_request_write_not_read_o = 1;
-                    vector_request_vector_select_o = vector3_select_q;
-                    vector_request_vector_addr_o = write_request_counter_q;
-                    if (vector_request_ready_i) begin
-                        write_request_counter_d++;
-                        if (write_request_counter_q >= NumChunksPerVector-1) begin
-                            state_d = WAITING_FOR_IN;
-                        end
+                end
+            end
+
+            // Request issuance: write takes priority over read on the cycle
+            // an odd response arrives; otherwise issue the next read.
+            if (vector_read_valid_i && (read_response_counter_q % 2 == 1)) begin // received vec2 read -> write
+                vector_request_valid_o = 1;
+                vector_request_write_not_read_o = 1;
+                vector_request_vector_select_o = vector3_select_q;
+                vector_request_vector_addr_o = write_request_counter_q;
+                if (vector_request_ready_i) begin
+                    write_request_counter_d++;
+                    if (write_request_counter_q >= NumChunksPerVector-1) begin
+                        state_d = WAITING_FOR_IN;
                     end
                 end
             end else if (read_request_counter_q < 2*NumChunksPerVector) begin
