@@ -383,7 +383,12 @@ always_comb begin
 
     accumulator_in_valid = 0;
     accumulator_in_final = 0;
-    accumulator_operands = '{default: 'x};
+    for (int b = 0; b < NumDdrBanksPerTmatmul; b++) begin
+        for (int i = 0; i < TmatmulParallelism; i++) begin
+            accumulator_operands[b][i / D][i % D] = ternary_mul(
+                go_ddr_data_q[b][i], importvector_read_data[i % D]);
+        end
+    end
     accumulator_out_ready = '0;
 
     importvector_request_valid = '0;
@@ -526,21 +531,14 @@ always_comb begin
                 go_ddr_data_d[b] = ddr_r_data_i[b];
             end
         end
-        go_input_fire = importvector_read_valid && all_moas_in_ready && (&go_ddr_valid_d);
+        go_input_fire = importvector_read_valid && all_moas_in_ready && (&go_ddr_valid_q);
         if (go_input_fire) begin
                 importvector_read_ready = 1;
                 accumulator_in_valid    = 1;
-                for (int b = 0; b < NumDdrBanksPerTmatmul; b++) begin
-                    for (int i = 0; i < TmatmulParallelism; i++) begin
-                        accumulator_operands[b][i / D][i % D] = ternary_mul(
-                            go_ddr_data_d[b][i], importvector_read_data[i % D]);
-                    end
-                end
                 if (importvector_read_addr >= DdrReadsPerRow-1) begin
                     accumulator_in_final = 1;
                 end
                 go_ddr_valid_d = '0;
-                go_ddr_data_d = '{default: 'x};
         end
 
         // Per-lane: MOA result -> gbfifo_export -> bank's exportvector.
