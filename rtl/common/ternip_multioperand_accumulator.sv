@@ -123,8 +123,6 @@ assign fifo_in_data = clipped_result;
 logic    out_valid_d, out_valid_q;
 result_t out_result_d, out_result_q;
 
-assign fifo_out_ready = !out_valid_q || out_ready_i;
-
 assign out_valid_o = out_valid_q;
 always_comb begin
     out_result_o = out_result_q;
@@ -133,13 +131,15 @@ end
 
 always_comb begin
     out_valid_d = out_valid_q;
-    if (fifo_out_ready)
-        out_valid_d = fifo_out_valid;
-end
-always_comb begin
     out_result_d = out_result_q;
-    if (fifo_out_ready && fifo_out_valid)
+    fifo_out_ready = 0;
+    if (fifo_out_valid && (!out_valid_q || out_ready_i)) begin
+        out_valid_d = 1;
         out_result_d = result_t'(fifo_out_data);
+        fifo_out_ready = 1;
+    end else if (out_ready_i) begin
+        out_valid_d = 0;
+    end
 end
 
 // State and control

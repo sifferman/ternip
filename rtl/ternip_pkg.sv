@@ -183,6 +183,11 @@ typedef logic [ImmediateWidth-1:0] immediate_t;
 
 typedef ternary_t [TmatmulParallelism-1:0] tmatmul_stream_data_t;
 
+// Address-carrying instructions (ldv, sv, tmatmul_go) stream their 64-bit
+// addresses as trailing beats on the same instruction channel after this
+// opcode beat. ldv/sv carry one address beat; tmatmul_go carries one beat per
+// DDR bank (NumDdrBanksPerTmatmul total). The opcode beat itself only has to
+// carry the rms_finish_accumulate length as an inline immediate.
 localparam int InstructionUnusedBitsWidth =
     InstructionWidth
     - ($bits(fu_e)
@@ -191,7 +196,7 @@ localparam int InstructionUnusedBitsWidth =
        + $bits(loadstore_op_e)
        + $bits(tmatmul_op_e)
        + $bits(rms_op_e)
-       + $bits(ddr_address_t));
+       + $bits(immediate_t));
 
 typedef struct packed {
     logic [InstructionUnusedBitsWidth-1:0] _unused;
@@ -203,7 +208,7 @@ typedef struct packed {
     loadstore_op_e loadstore_op;
     tmatmul_op_e tmatmul_op;
     rms_op_e rms_op;
-    ddr_address_t ddr_address;
+    immediate_t immediate;
 } instruction_t;
 
 endpackage : ternip_pkg
@@ -214,6 +219,22 @@ module ternip_assertions; import ternip_pkg::*;
 
 if ($bits(instruction_t)!=InstructionWidth) $fatal(0, "Expected an instruction_t width of %0d, but received %0d.", InstructionWidth, $bits(instruction_t));
 if (!(FixedPointPrecision inside {8, 16})) $fatal(0, "Invalid value for FixedPointPrecision: %0d.", FixedPointPrecision);
+
+// NumDdrBanksPerTmatmul = N: each ternip_tmatmul has N parallel (DDR stream +
+// ternary_mul + MOA + gbfifo_export + exportvector) lanes feeding the same
+// importvector. Row-wise contiguous matrix split: bank b owns rows
+// [b*(D/N), (b+1)*(D/N)). All four divisibility conditions are required for
+// the lane logic to be clean.
+if (NumDdrBanksPerTmatmul < 1)
+    $fatal(0, "NumDdrBanksPerTmatmul (%0d) must be >= 1.", NumDdrBanksPerTmatmul);
+if (NumDdrBanksPerTmatmul > DramNumBanks)
+    $fatal(0, "NumDdrBanksPerTmatmul (%0d) exceeds DramNumBanks (%0d).", NumDdrBanksPerTmatmul, DramNumBanks);
+if (D % NumDdrBanksPerTmatmul != 0)
+    $fatal(0, "D (%0d) must be divisible by NumDdrBanksPerTmatmul (%0d).", D, NumDdrBanksPerTmatmul);
+if (MatrixSizeInBytes % NumDdrBanksPerTmatmul != 0)
+    $fatal(0, "MatrixSizeInBytes (%0d) must be divisible by NumDdrBanksPerTmatmul (%0d).", MatrixSizeInBytes, NumDdrBanksPerTmatmul);
+if ((D / NumDdrBanksPerTmatmul) % VectorParallelism != 0)
+    $fatal(0, "Rows-per-bank (D/N = %0d) must be divisible by VectorParallelism (%0d) so each bank's exportvector packs cleanly into chunks.", D / NumDdrBanksPerTmatmul, VectorParallelism);
 
 endmodule
 /* verilator lint_restore */

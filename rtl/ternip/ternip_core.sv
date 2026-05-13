@@ -60,6 +60,7 @@ module ternip_core #(
     parameter int RmsSqrtInputExponent        = ternip_pkg::RmsSqrtInputExponent,
     parameter int RmsAccumulatorWidth         = ternip_pkg::RmsAccumulatorWidth,
     parameter int MatrixSizeInBytes           = ternip_pkg::MatrixSizeInBytes,
+    parameter int NumDdrBanksPerTmatmul       = ternip_pkg::NumDdrBanksPerTmatmul,
 
     parameter ternip_pkg::mul_impl_e MultiplicationImplementation = ternip_pkg::MultiplicationImplementation,
     parameter ternip_pkg::div_impl_e DivisionImplementation       = ternip_pkg::DivisionImplementation,
@@ -98,14 +99,14 @@ module ternip_core #(
 
     output logic [63:0]          loadstore_ddr_debug_o,
 
-    input  logic                 tmatmul_ddr_stream_ready_i,
-    output logic                 tmatmul_ddr_stream_valid_o,
-    output ddr_address_t         tmatmul_ddr_stream_address_o,
-    output logic [31:0]          tmatmul_ddr_stream_length_o,
+    input  logic         [NumDdrBanksPerTmatmul-1:0]         tmatmul_ddr_stream_ready_i,
+    output logic         [NumDdrBanksPerTmatmul-1:0]         tmatmul_ddr_stream_valid_o,
+    output ddr_address_t [NumDdrBanksPerTmatmul-1:0]         tmatmul_ddr_stream_address_o,
+    output logic         [NumDdrBanksPerTmatmul-1:0][31:0]   tmatmul_ddr_stream_length_o,
 
-    output logic                 tmatmul_ddr_r_ready_o,
-    input  logic                 tmatmul_ddr_r_valid_i,
-    input  tmatmul_stream_data_t tmatmul_ddr_r_data_i,
+    output logic                 [NumDdrBanksPerTmatmul-1:0] tmatmul_ddr_r_ready_o,
+    input  logic                 [NumDdrBanksPerTmatmul-1:0] tmatmul_ddr_r_valid_i,
+    input  tmatmul_stream_data_t [NumDdrBanksPerTmatmul-1:0] tmatmul_ddr_r_data_i,
 
     output logic                 stall_active_o,
     input  logic                 stall_clear_i
@@ -317,10 +318,10 @@ ternip_rms #(
     .rms_value_reciprocal_valid_o()
 );
 
-logic                    tmatmul_in_ready;
-logic                    tmatmul_in_valid;
-vector_select_t          tmatmul_in_vector_select;
-ddr_address_t            tmatmul_in_go_matrix_address;
+logic                                     tmatmul_in_ready;
+logic                                     tmatmul_in_valid;
+vector_select_t                           tmatmul_in_vector_select;
+ddr_address_t [NumDdrBanksPerTmatmul-1:0] tmatmul_in_go_matrix_address;
 
 ternip_pkg::tmatmul_op_e tmatmul_in_operation;
 
@@ -340,7 +341,8 @@ ternip_tmatmul #(
     .NumVectorRegisters(NumVectorRegisters),
     .NumChunksPerVector(NumChunksPerVector),
     .DdrAddressWidth(DdrAddressWidth),
-    .MatrixSizeInBytes(MatrixSizeInBytes)
+    .MatrixSizeInBytes(MatrixSizeInBytes),
+    .NumDdrBanksPerTmatmul(NumDdrBanksPerTmatmul)
 ) tmatmul (
     .clk_i,
     .rst_ni,
@@ -390,11 +392,53 @@ end
 
 assign stall_active_o = stall_active_q;
 
-assign instruction_ready_o = (loadstore_in_ready
-                              & rms_in_ready
-                              & rowwise_operation_in_ready
-                              & tmatmul_in_ready
-                              & !stall_active_q);
+// Variable-length instruction decode FSM.
+//
+// Each instruction starts with a 64-bit opcode beat on `instruction_i`.
+// Address-carrying instructions stream their addresses as trailing 64-bit
+// beats on the same channel:
+//   * ldv / sv (LOADSTORE): 1 trailing address beat (vector_memory_address).
+//   * tmatmul_go: NumDdrBanksPerTmatmul trailing beats, one DDR address per
+//     bank.
+//   * everything else: opcode beat only.
+// All other immediates (rms_finish_accumulate's length) ride inside the
+// opcode beat's `immediate` field.
+//
+// The FSM decodes the opcode in DECODE, collects the trailing beats in
+// FETCH_LOADSTORE_ADDR / FETCH_TMATMUL_ADDR, and then asserts the target
+// FU's `in_valid` in DISPATCH until the FU consumes it.
+
+`define SAFE_CLOG2(x) ( (((x)==1) || ((x)==0))? 1 : $clog2((x)))
+
+typedef enum logic [1:0] {
+    INSTR_FSM_DECODE,
+    INSTR_FSM_FETCH_LOADSTORE_ADDR,
+    INSTR_FSM_FETCH_TMATMUL_ADDR,
+    INSTR_FSM_DISPATCH
+} instr_fsm_e;
+
+instr_fsm_e   instr_fsm_d, instr_fsm_q;
+instruction_t latched_instr_d, latched_instr_q;
+ddr_address_t                              latched_loadstore_addr_d, latched_loadstore_addr_q;
+ddr_address_t [NumDdrBanksPerTmatmul-1:0]  latched_tmatmul_addrs_d,  latched_tmatmul_addrs_q;
+logic [`SAFE_CLOG2(NumDdrBanksPerTmatmul):0] tmatmul_addr_counter_d, tmatmul_addr_counter_q;
+
+// A 64-bit beat on `instruction_i`, reinterpreted as a raw DDR address. The
+// FSM consumes it during the FETCH_* states.
+wire ddr_address_t instr_beat_as_addr = ddr_address_t'(instruction_i);
+
+// Gate opcode acceptance on all FUs being ready, exactly like the original
+// single-beat dispatch path did. The vector_request mux assumes only one FU
+// is doing a register access at a time; if we let a new opcode in before
+// the previous instruction's FU finished, two FUs end up racing the same
+// cycle for the vector_register port.
+wire all_fus_in_ready = loadstore_in_ready
+                      & rms_in_ready
+                      & rowwise_operation_in_ready
+                      & tmatmul_in_ready;
+
+logic instr_ready_internal;
+assign instruction_ready_o = instr_ready_internal & !stall_active_q;
 
 always_comb begin
     vector_request_valid = 0;
@@ -447,7 +491,7 @@ always @(posedge clk_i) if (rst_ni) begin
         loadstore_vector_request_valid,
         rms_vector_request_valid,
         rowwise_operation_vector_request_valid,
-        tmatmul_in_valid
+        tmatmul_vector_request_valid
     })) else $fatal(0, "Conflict in vector_request_valid");
     assert final (1 >= $countones({
         loadstore_vector_read_ready,
@@ -459,6 +503,14 @@ end
 `endif
 
 always_comb begin
+    instr_fsm_d = instr_fsm_q;
+    latched_instr_d = latched_instr_q;
+    latched_loadstore_addr_d = latched_loadstore_addr_q;
+    latched_tmatmul_addrs_d = latched_tmatmul_addrs_q;
+    tmatmul_addr_counter_d = tmatmul_addr_counter_q;
+
+    instr_ready_internal = 0;
+
     loadstore_in_valid = '0;
     loadstore_in_vector_operation = ternip_pkg::NO_LS_OP;
     loadstore_in_vector_memory_address = 'x;
@@ -476,45 +528,124 @@ always_comb begin
     rms_in_vector2_select = 'x;
     rms_in_length = 'x;
 
-    tmatmul_in_valid = '0;
+    tmatmul_in_valid = 0;
     tmatmul_in_operation = ternip_pkg::NO_TMATMUL_OP;
-    tmatmul_in_go_matrix_address = 'x;
+    tmatmul_in_go_matrix_address = '{default: 'x};
     tmatmul_in_vector_select = 'x;
 
     received_stall_command = 0;
 
-    if (instruction_valid_i && instruction_ready_o) unique case (instruction_i.fu)
-        ternip_pkg::LOADSTORE: begin
-            loadstore_in_valid = 1;
-            loadstore_in_vector_operation = instruction_i.loadstore_op;
-            loadstore_in_vector_memory_address = instruction_i.ddr_address;
-            loadstore_in_vector_select = instruction_i.v_a;
+    unique case (instr_fsm_q)
+        INSTR_FSM_DECODE: begin
+            // Ready for a fresh opcode beat — but only when every FU is
+            // idle, matching the original combinational dispatch path.
+            instr_ready_internal = all_fus_in_ready;
+            if (instruction_valid_i && instruction_ready_o) begin
+                latched_instr_d = instruction_i;
+                unique case (instruction_i.fu)
+                    ternip_pkg::LOADSTORE: instr_fsm_d = INSTR_FSM_FETCH_LOADSTORE_ADDR;
+                    ternip_pkg::TMATMUL: begin
+                        if (instruction_i.tmatmul_op == ternip_pkg::GO) begin
+                            instr_fsm_d = INSTR_FSM_FETCH_TMATMUL_ADDR;
+                            tmatmul_addr_counter_d = 0;
+                        end else begin
+                            instr_fsm_d = INSTR_FSM_DISPATCH;
+                        end
+                    end
+                    default: instr_fsm_d = INSTR_FSM_DISPATCH;
+                endcase
+            end
         end
-        ternip_pkg::ROWWISE_OPERATION: begin
-            rowwise_operation_in_valid = 1;
-            rowwise_operation_in_operation = instruction_i.rowwise_op;
-            rowwise_operation_in_vector1_r_select = instruction_i.v_a;
-            rowwise_operation_in_vector2_r_select = instruction_i.v_b;
-            rowwise_operation_in_vector3_r_select = instruction_i.v_y;
+
+        INSTR_FSM_FETCH_LOADSTORE_ADDR: begin
+            // Consume the single trailing address beat for ldv / sv.
+            instr_ready_internal = 1;
+            if (instruction_valid_i && instruction_ready_o) begin
+                latched_loadstore_addr_d = instr_beat_as_addr;
+                instr_fsm_d = INSTR_FSM_DISPATCH;
+            end
         end
-        ternip_pkg::TMATMUL: begin
-            tmatmul_in_valid = 1;
-            tmatmul_in_operation = instruction_i.tmatmul_op;
-            tmatmul_in_go_matrix_address = instruction_i.ddr_address;
-            tmatmul_in_vector_select = instruction_i.v_a;
+
+        INSTR_FSM_FETCH_TMATMUL_ADDR: begin
+            // Consume N trailing address beats for tmatmul_go, one per bank.
+            instr_ready_internal = 1;
+            if (instruction_valid_i && instruction_ready_o) begin
+                latched_tmatmul_addrs_d[tmatmul_addr_counter_q[`SAFE_CLOG2(NumDdrBanksPerTmatmul)-1:0]] = instr_beat_as_addr;
+                if (tmatmul_addr_counter_q == NumDdrBanksPerTmatmul - 1) begin
+                    instr_fsm_d = INSTR_FSM_DISPATCH;
+                end else begin
+                    tmatmul_addr_counter_d = tmatmul_addr_counter_q + 1;
+                end
+            end
         end
-        ternip_pkg::RMS: begin
-            rms_in_valid = 1;
-            rms_in_op = instruction_i.rms_op;
-            rms_in_vector1_select = instruction_i.v_a;
-            rms_in_vector2_select = instruction_i.v_y;
-            rms_in_length = instruction_i.ddr_address;
+
+        INSTR_FSM_DISPATCH: begin
+            // Drive the latched instruction at the chosen FU until it accepts.
+            unique case (latched_instr_q.fu)
+                ternip_pkg::LOADSTORE: begin
+                    loadstore_in_valid = 1;
+                    loadstore_in_vector_operation = latched_instr_q.loadstore_op;
+                    loadstore_in_vector_memory_address = latched_loadstore_addr_q;
+                    loadstore_in_vector_select = latched_instr_q.v_a;
+                    if (loadstore_in_ready) instr_fsm_d = INSTR_FSM_DECODE;
+                end
+                ternip_pkg::ROWWISE_OPERATION: begin
+                    rowwise_operation_in_valid = 1;
+                    rowwise_operation_in_operation = latched_instr_q.rowwise_op;
+                    rowwise_operation_in_vector1_r_select = latched_instr_q.v_a;
+                    rowwise_operation_in_vector2_r_select = latched_instr_q.v_b;
+                    rowwise_operation_in_vector3_r_select = latched_instr_q.v_y;
+                    if (rowwise_operation_in_ready) instr_fsm_d = INSTR_FSM_DECODE;
+                end
+                ternip_pkg::TMATMUL: begin
+                    tmatmul_in_valid = 1;
+                    tmatmul_in_operation = latched_instr_q.tmatmul_op;
+                    tmatmul_in_go_matrix_address = latched_tmatmul_addrs_q;
+                    tmatmul_in_vector_select = latched_instr_q.v_a;
+                    if (tmatmul_in_ready) instr_fsm_d = INSTR_FSM_DECODE;
+                end
+                ternip_pkg::RMS: begin
+                    rms_in_valid = 1;
+                    rms_in_op = latched_instr_q.rms_op;
+                    rms_in_vector1_select = latched_instr_q.v_a;
+                    rms_in_vector2_select = latched_instr_q.v_y;
+                    rms_in_length = latched_instr_q.immediate;
+                    if (rms_in_ready) instr_fsm_d = INSTR_FSM_DECODE;
+                end
+                ternip_pkg::STALL: begin
+                    received_stall_command = 1;
+                    instr_fsm_d = INSTR_FSM_DECODE;
+                end
+                default: instr_fsm_d = INSTR_FSM_DECODE;
+            endcase
         end
-        ternip_pkg::STALL: begin
-            received_stall_command = 1;
-        end
-        default: ;
+
+        default: instr_fsm_d = INSTR_FSM_DECODE;
     endcase
 end
 
+always_ff @(posedge clk_i) begin
+    if (!rst_ni) begin
+        instr_fsm_q <= INSTR_FSM_DECODE;
+        tmatmul_addr_counter_q <= '0;
+    end else begin
+        instr_fsm_q <= instr_fsm_d;
+        tmatmul_addr_counter_q <= tmatmul_addr_counter_d;
+    end
+end
+always_ff @(posedge clk_i) begin
+    latched_instr_q <= latched_instr_d;
+    latched_loadstore_addr_q <= latched_loadstore_addr_d;
+    latched_tmatmul_addrs_q <= latched_tmatmul_addrs_d;
+    `ifndef SYNTHESIS
+    if (!rst_ni) begin
+        latched_instr_q <= 'x;
+        latched_loadstore_addr_q <= 'x;
+        latched_tmatmul_addrs_q <= '{default: 'x};
+    end
+    `endif
+end
+
 endmodule
+
+`undef SAFE_CLOG2
