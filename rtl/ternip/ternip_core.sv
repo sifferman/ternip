@@ -118,6 +118,25 @@ vector_select_t vector_request_vector_select;
 vector_offset_t vector_request_vector_addr;
 vector_chunk_t  vector_request_w_data;
 
+logic           vector_request2_ready;
+logic           vector_request2_valid;
+logic           vector_request2_write_not_read;
+vector_select_t vector_request2_vector_select;
+vector_offset_t vector_request2_vector_addr;
+vector_chunk_t  vector_request2_w_data;
+
+logic                rms_vector_request2_valid;
+logic                rms_vector_request2_write_not_read;
+vector_select_t      rms_vector_request2_vector_select;
+vector_offset_t      rms_vector_request2_vector_addr;
+vector_chunk_t       rms_vector_request2_w_data;
+
+logic                rowwise_operation_vector_request2_valid;
+logic                rowwise_operation_vector_request2_write_not_read;
+vector_select_t      rowwise_operation_vector_request2_vector_select;
+vector_offset_t      rowwise_operation_vector_request2_vector_addr;
+vector_chunk_t       rowwise_operation_vector_request2_w_data;
+
 logic           vector_read_ready;
 logic           vector_read_valid;
 vector_offset_t vector_read_addr;
@@ -140,11 +159,24 @@ ternip_vector_registers #(
     .request_vector_addr_i(vector_request_vector_addr),
     .request_w_data_i(vector_request_w_data),
 
+    .request2_ready_o(vector_request2_ready),
+    .request2_valid_i(vector_request2_valid),
+    .request2_write_not_read_i(vector_request2_write_not_read),
+    .request2_vector_select_i(vector_request2_vector_select),
+    .request2_vector_addr_i(vector_request2_vector_addr),
+    .request2_w_data_i(vector_request2_w_data),
+
     .read_ready_i(vector_read_ready),
     .read_valid_o(vector_read_valid),
     .read_vector_select_o(),
     .read_addr_o(vector_read_addr),
-    .read_data_o(vector_read_data)
+    .read_data_o(vector_read_data),
+
+    .read2_ready_i(1'b1),
+    .read2_valid_o(),
+    .read2_vector_select_o(),
+    .read2_addr_o(),
+    .read2_data_o()
 );
 
 logic                      loadstore_in_ready;
@@ -255,7 +287,14 @@ ternip_rowwise_operation #(
 
     .vector_read_ready_o(rowwise_operation_vector_read_ready),
     .vector_read_valid_i(vector_read_valid),
-    .vector_read_data_i(vector_read_data)
+    .vector_read_data_i(vector_read_data),
+
+    .vector_request2_ready_i(vector_request2_ready),
+    .vector_request2_valid_o(rowwise_operation_vector_request2_valid),
+    .vector_request2_write_not_read_o(rowwise_operation_vector_request2_write_not_read),
+    .vector_request2_vector_select_o(rowwise_operation_vector_request2_vector_select),
+    .vector_request2_vector_addr_o(rowwise_operation_vector_request2_vector_addr),
+    .vector_request2_w_data_o(rowwise_operation_vector_request2_w_data)
 );
 
 logic                rms_in_ready;
@@ -310,6 +349,13 @@ ternip_rms #(
     .vector_read_valid_i(vector_read_valid),
     .vector_read_addr_i(vector_read_addr),
     .vector_read_data_i(vector_read_data),
+
+    .vector_request2_ready_i(vector_request2_ready),
+    .vector_request2_valid_o(rms_vector_request2_valid),
+    .vector_request2_write_not_read_o(rms_vector_request2_write_not_read),
+    .vector_request2_vector_select_o(rms_vector_request2_vector_select),
+    .vector_request2_vector_addr_o(rms_vector_request2_vector_addr),
+    .vector_request2_w_data_o(rms_vector_request2_w_data),
 
     .accumulator_out_valid_o(),
     .accumulator_out_result_o(),
@@ -440,6 +486,32 @@ assign vector_read_ready = (loadstore_vector_read_ready
                             | rms_vector_read_ready
                             | rowwise_operation_vector_read_ready
                             | tmatmul_vector_read_ready);
+
+always_comb begin
+    vector_request2_valid          = 0;
+    vector_request2_write_not_read = 'x;
+    vector_request2_vector_select  = 'x;
+    vector_request2_vector_addr    = 'x;
+    vector_request2_w_data         = 'x;
+
+    unique case (1)
+        rms_vector_request2_valid: begin
+            vector_request2_valid          = 1;
+            vector_request2_write_not_read = rms_vector_request2_write_not_read;
+            vector_request2_vector_select  = rms_vector_request2_vector_select;
+            vector_request2_vector_addr    = rms_vector_request2_vector_addr;
+            vector_request2_w_data         = rms_vector_request2_w_data;
+        end
+        rowwise_operation_vector_request2_valid: begin
+            vector_request2_valid          = 1;
+            vector_request2_write_not_read = rowwise_operation_vector_request2_write_not_read;
+            vector_request2_vector_select  = rowwise_operation_vector_request2_vector_select;
+            vector_request2_vector_addr    = rowwise_operation_vector_request2_vector_addr;
+            vector_request2_w_data         = rowwise_operation_vector_request2_w_data;
+        end
+        default: ;
+    endcase
+end
 
 `ifndef SYNTHESIS
 always @(posedge clk_i) if (rst_ni) begin

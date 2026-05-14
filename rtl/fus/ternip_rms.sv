@@ -36,7 +36,9 @@
 // Use CLEAR before a new RMS group. Then issue one or more ACCUMULATE commands,
 // one FINISH_ACCUMULATE command, and one or more NORM commands. The unit accepts
 // one command on in_* and sequences the vector-register and math handshakes
-// until that command finishes.
+// until that command finishes. NORM uses the primary vector port for reads and
+// vector_request2_* for writes so reads and writes can overlap when the register
+// file is dual-ported.
 
 module ternip_rms #(
     parameter int FixedPointPrecision         = ternip_pkg::FixedPointPrecision,
@@ -86,6 +88,13 @@ module ternip_rms #(
     input  logic           vector_read_valid_i,
     input  vector_offset_t vector_read_addr_i,
     input  vector_chunk_t  vector_read_data_i,
+
+    input  logic           vector_request2_ready_i,
+    output logic           vector_request2_valid_o,
+    output logic           vector_request2_write_not_read_o,
+    output vector_select_t vector_request2_vector_select_o,
+    output vector_offset_t vector_request2_vector_addr_o,
+    output vector_chunk_t  vector_request2_w_data_o,
 
     // debug ports
     output logic                  accumulator_out_valid_o,
@@ -349,6 +358,12 @@ always_comb begin
     vector_request_w_data_o = 'x;
     vector_read_ready_o = 0;
 
+    vector_request2_valid_o = 0;
+    vector_request2_write_not_read_o = 'x;
+    vector_request2_vector_addr_o = 'x;
+    vector_request2_vector_select_o = 'x;
+    vector_request2_w_data_o = 'x;
+
     vector_read_counter_d = vector_read_counter_q;
     vector_processed_counter_d = vector_processed_counter_q;
 
@@ -489,14 +504,25 @@ always_comb begin
         norm_mul_in_a = vector_read_data_i;
         norm_mul_in_b = rms_value_reciprocal_q;
 
-        // buffer -> write request
-        if (norm_mul_out_result_buffer_valid_q) begin
+        // Port 1: read request stream
+        if (vector_read_counter_q < NumChunksPerVector) begin
             vector_request_valid_o = 1;
-            vector_request_write_not_read_o = 1;
-            vector_request_vector_addr_o = vector_processed_counter_q;
-            vector_request_w_data_o = norm_mul_out_result_buffer_q;
-            vector_request_vector_select_o = in_vector2_select_q;
+            vector_request_write_not_read_o = 0;
+            vector_request_vector_addr_o = vector_read_counter_q;
+            vector_request_vector_select_o = in_vector1_select_q;
             if (vector_request_ready_i) begin
+                vector_read_counter_d++;
+            end
+        end
+
+        // Port 2: write request stream (drains multiplier output buffer)
+        if (norm_mul_out_result_buffer_valid_q) begin
+            vector_request2_valid_o = 1;
+            vector_request2_write_not_read_o = 1;
+            vector_request2_vector_addr_o = vector_processed_counter_q;
+            vector_request2_w_data_o = norm_mul_out_result_buffer_q;
+            vector_request2_vector_select_o = in_vector2_select_q;
+            if (vector_request2_ready_i) begin
                 norm_mul_out_result_buffer_d = 'x;
                 norm_mul_out_result_buffer_valid_d = 0;
                 vector_processed_counter_d++;
@@ -510,19 +536,10 @@ always_comb begin
                     vector_processed_counter_d = 'x;
                 end
             end
-        end else if (vector_read_counter_q < NumChunksPerVector) begin // read request
-            // if a read was just received, do not do another read
-            vector_request_valid_o = 1;
-            vector_request_write_not_read_o = 0;
-            vector_request_vector_addr_o = vector_read_counter_q;
-            vector_request_vector_select_o = in_vector1_select_q;
-            if (vector_request_ready_i && vector_request_valid_o) begin
-                vector_read_counter_d++;
-            end
         end
 
         // multiplier -> buffer
-        norm_mul_out_ready = {VectorParallelism{ !norm_mul_out_result_buffer_valid_q || vector_request_ready_i }};
+        norm_mul_out_ready = {VectorParallelism{ !norm_mul_out_result_buffer_valid_q || vector_request2_ready_i }};
         if (norm_mul_out_ready[0] && norm_mul_out_valid[0]) begin
             norm_mul_out_result_buffer_d = norm_mul_out_result;
             norm_mul_out_result_buffer_valid_d = 1;

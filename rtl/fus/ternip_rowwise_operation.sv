@@ -76,7 +76,14 @@ module ternip_rowwise_operation #(
 
     output logic           vector_read_ready_o,
     input  logic           vector_read_valid_i,
-    input  vector_chunk_t  vector_read_data_i
+    input  vector_chunk_t  vector_read_data_i,
+
+    input  logic           vector_request2_ready_i,
+    output logic           vector_request2_valid_o,
+    output logic           vector_request2_write_not_read_o,
+    output vector_select_t vector_request2_vector_select_o,
+    output vector_offset_t vector_request2_vector_addr_o,
+    output vector_chunk_t  vector_request2_w_data_o
 );
 
 logic [$clog2(D+1):0] read_request_counter_d, read_request_counter_q;
@@ -169,6 +176,11 @@ always_comb begin
     vector_request_vector_select_o = 0;
     vector_request_vector_addr_o = 'x;
 
+    vector_request2_valid_o = 0;
+    vector_request2_write_not_read_o = 1;
+    vector_request2_vector_select_o = 'x;
+    vector_request2_vector_addr_o = 'x;
+
     vector_read_ready_o = 0;
     vector1_r_data_d = vector1_r_data_q;
 
@@ -217,13 +229,24 @@ always_comb begin
                 ternip_pkg::SILU: rowwise_silu_in_valid = multicycle_in_valid;
             endcase
 
-            // buffer -> write request
-            if (multicycle_result_buffer_valid_q) begin
+            // Port 1: read request stream
+            if (read_request_counter_q < NumChunksPerVector) begin
                 vector_request_valid_o = 1;
-                vector_request_write_not_read_o = 1;
-                vector_request_vector_select_o = vector3_select_q;
-                vector_request_vector_addr_o = write_request_counter_q;
+                vector_request_write_not_read_o = 0;
+                vector_request_vector_select_o = vector1_select_q;
+                vector_request_vector_addr_o = read_request_counter_q;
                 if (vector_request_ready_i) begin
+                    read_request_counter_d++;
+                end
+            end
+
+            // Port 2: write request stream (drains activation buffer)
+            if (multicycle_result_buffer_valid_q) begin
+                vector_request2_valid_o = 1;
+                vector_request2_write_not_read_o = 1;
+                vector_request2_vector_select_o = vector3_select_q;
+                vector_request2_vector_addr_o = write_request_counter_q;
+                if (vector_request2_ready_i) begin
                     multicycle_result_buffer_d = 'x;
                     multicycle_result_buffer_valid_d = 0;
                     write_request_counter_d++;
@@ -231,19 +254,10 @@ always_comb begin
                         state_d = WAITING_FOR_IN;
                     end
                 end
-            end else if (read_request_counter_q < NumChunksPerVector) begin // read request
-                // if a read was just received, do not do another read
-                vector_request_valid_o = 1;
-                vector_request_write_not_read_o = 0;
-                vector_request_vector_select_o = vector1_select_q;
-                vector_request_vector_addr_o = read_request_counter_q;
-                if (vector_request_ready_i && vector_request_valid_o) begin
-                    read_request_counter_d++;
-                end
             end
 
             // sig, csig, silu -> buffer
-            multicycle_out_ready = !multicycle_result_buffer_valid_q || vector_request_ready_i;
+            multicycle_out_ready = !multicycle_result_buffer_valid_q || vector_request2_ready_i;
             case (vector_operation_q)
                 ternip_pkg::SIG:  multicycle_out_valid = rowwise_sig_out_valid;
                 ternip_pkg::CSIG: multicycle_out_valid = rowwise_csig_out_valid;
@@ -267,28 +281,28 @@ always_comb begin
 
         end else if (operation_is_multioperand && !operation_is_multicycle) begin
             // ADD / SUB
+            // Port 1: continuously issue read requests (alternating vec1/vec2)
+            // Port 1 read response: latch vec1, or send (vec1+vec2)->result on port 2
+            // Port 2: write result (combinationally produced from current vec2 read response)
             vector_read_ready_o = 1;
             if (vector_read_valid_i) begin
                 read_response_counter_d++;
                 if (read_response_counter_q % 2 == 0) begin // received vec1 read
                     vector1_r_data_d = vector_read_data_i;
-                end
-            end
-
-            // Request issuance: write takes priority over read on the cycle
-            // an odd response arrives; otherwise issue the next read.
-            if (vector_read_valid_i && (read_response_counter_q % 2 == 1)) begin // received vec2 read -> write
-                vector_request_valid_o = 1;
-                vector_request_write_not_read_o = 1;
-                vector_request_vector_select_o = vector3_select_q;
-                vector_request_vector_addr_o = write_request_counter_q;
-                if (vector_request_ready_i) begin
-                    write_request_counter_d++;
-                    if (write_request_counter_q >= NumChunksPerVector-1) begin
-                        state_d = WAITING_FOR_IN;
+                end else if (read_response_counter_q % 2 == 1) begin // received vec2 read
+                    vector_request2_valid_o = 1;
+                    vector_request2_write_not_read_o = 1;
+                    vector_request2_vector_select_o = vector3_select_q;
+                    vector_request2_vector_addr_o = write_request_counter_q;
+                    if (vector_request2_ready_i) begin
+                        write_request_counter_d++;
+                        if (write_request_counter_q >= NumChunksPerVector-1) begin
+                            state_d = WAITING_FOR_IN;
+                        end
                     end
                 end
-            end else if (read_request_counter_q < 2*NumChunksPerVector) begin
+            end
+            if (read_request_counter_q < 2*NumChunksPerVector) begin
                 vector_request_valid_o = 1;
                 vector_request_write_not_read_o = 0;
                 if (read_request_counter_q % 2 == 0)
@@ -324,21 +338,8 @@ always_comb begin
                 ternip_pkg::DIV: for (int i = 0; i < VectorParallelism; i++) rowwise_div_in_valid[i] = multicycle_in_valid;
             endcase
 
-            // buffer -> write request
-            if (multicycle_result_buffer_valid_q) begin
-                vector_request_valid_o = 1;
-                vector_request_write_not_read_o = 1;
-                vector_request_vector_select_o = vector3_select_q;
-                vector_request_vector_addr_o = write_request_counter_q;
-                if (vector_request_ready_i) begin
-                    multicycle_result_buffer_d = 'x;
-                    multicycle_result_buffer_valid_d = 0;
-                    write_request_counter_d++;
-                    if (write_request_counter_q >= NumChunksPerVector-1) begin
-                        state_d = WAITING_FOR_IN;
-                    end
-                end
-            end else if (read_request_counter_q < 2*NumChunksPerVector) begin // read request
+            // Port 1: read request stream (alternating vec1/vec2)
+            if (read_request_counter_q < 2*NumChunksPerVector) begin
                 vector_request_valid_o = 1;
                 vector_request_write_not_read_o = 0;
                 if (read_request_counter_q % 2 == 0) begin // request vec1 read
@@ -352,8 +353,24 @@ always_comb begin
                 end
             end
 
+            // Port 2: write request stream (drains multiplier/divider output buffer)
+            if (multicycle_result_buffer_valid_q) begin
+                vector_request2_valid_o = 1;
+                vector_request2_write_not_read_o = 1;
+                vector_request2_vector_select_o = vector3_select_q;
+                vector_request2_vector_addr_o = write_request_counter_q;
+                if (vector_request2_ready_i) begin
+                    multicycle_result_buffer_d = 'x;
+                    multicycle_result_buffer_valid_d = 0;
+                    write_request_counter_d++;
+                    if (write_request_counter_q >= NumChunksPerVector-1) begin
+                        state_d = WAITING_FOR_IN;
+                    end
+                end
+            end
+
             // multioperand output -> buffer
-            multicycle_out_ready = !multicycle_result_buffer_valid_q || vector_request_ready_i;
+            multicycle_out_ready = !multicycle_result_buffer_valid_q || vector_request2_ready_i;
             if (vector_operation_q == ternip_pkg::MUL) begin
                 for (int i = 0; i < VectorParallelism; i++) rowwise_mul_out_ready[i] = multicycle_out_ready;
                 multicycle_out_valid = all_mul_out_valid;
@@ -532,16 +549,18 @@ ternip_silu_parallelized #(
     .vector_data_o(rowwise_silu_result)
 );
 
+assign vector_request_w_data_o = 'x;
+
 always_comb begin
     unique case (vector_operation_q)
-        ternip_pkg::ADD:     vector_request_w_data_o = rowwise_add_result;
-        ternip_pkg::SUB:     vector_request_w_data_o = rowwise_sub_result;
-        ternip_pkg::MUL:     vector_request_w_data_o = multicycle_result_buffer_q;
-        ternip_pkg::DIV:     vector_request_w_data_o = multicycle_result_buffer_q;
-        ternip_pkg::SIG:     vector_request_w_data_o = multicycle_result_buffer_q;
-        ternip_pkg::CSIG:    vector_request_w_data_o = multicycle_result_buffer_q;
-        ternip_pkg::SILU:    vector_request_w_data_o = multicycle_result_buffer_q;
-        default: vector_request_w_data_o = 'x;
+        ternip_pkg::ADD:     vector_request2_w_data_o = rowwise_add_result;
+        ternip_pkg::SUB:     vector_request2_w_data_o = rowwise_sub_result;
+        ternip_pkg::MUL:     vector_request2_w_data_o = multicycle_result_buffer_q;
+        ternip_pkg::DIV:     vector_request2_w_data_o = multicycle_result_buffer_q;
+        ternip_pkg::SIG:     vector_request2_w_data_o = multicycle_result_buffer_q;
+        ternip_pkg::CSIG:    vector_request2_w_data_o = multicycle_result_buffer_q;
+        ternip_pkg::SILU:    vector_request2_w_data_o = multicycle_result_buffer_q;
+        default: vector_request2_w_data_o = 'x;
     endcase
 end
 

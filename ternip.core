@@ -19,6 +19,7 @@ filesets:
       - rtl/common/ternip_multioperand_accumulator.sv
       - rtl/common/ternip_pipelined_interconnect.sv
       - rtl/common/ternip_pipelined_mem.sv
+      - rtl/common/ternip_dual_port_mem.sv
       - rtl/math/ternip_add.sv
       - rtl/math/ternip_sub.sv
       - rtl/math/ternip_mul.sv
