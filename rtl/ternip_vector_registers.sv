@@ -32,6 +32,8 @@
 // vector register and one chunk address, then either writes that chunk or starts
 // a read for that chunk.
 //
+// The request2_* and read2_* interfaces are a second port to the same storage.
+//
 // Use request_ready_o/request_valid_i for both reads and writes. Reads return
 // later on read_valid_o/read_data_o, along with the vector and chunk address
 // that were read.
@@ -62,33 +64,60 @@ module ternip_vector_registers #(
     output logic           read_valid_o,
     output vector_select_t read_vector_select_o,
     output vector_offset_t read_addr_o,
-    output vector_chunk_t  read_data_o
+    output vector_chunk_t  read_data_o,
+
+    output logic           request2_ready_o,
+    input  logic           request2_valid_i,
+    input  logic           request2_write_not_read_i,
+    input  vector_select_t request2_vector_select_i,
+    input  vector_offset_t request2_vector_addr_i,
+    input  vector_chunk_t  request2_w_data_i,
+
+    input  logic           read2_ready_i,
+    output logic           read2_valid_o,
+    output vector_select_t read2_vector_select_o,
+    output vector_offset_t read2_addr_o,
+    output vector_chunk_t  read2_data_o
 );
 
 logic [$bits(vector_select_t)+$bits(vector_offset_t)-1:0] request_mem_addr, read_mem_addr;
+logic [$bits(vector_select_t)+$bits(vector_offset_t)-1:0] request2_mem_addr, read2_mem_addr;
 assign request_mem_addr = {request_vector_select_i, request_vector_addr_i};
+assign request2_mem_addr = {request2_vector_select_i, request2_vector_addr_i};
 assign {read_vector_select_o, read_addr_o} = read_mem_addr;
+assign {read2_vector_select_o, read2_addr_o} = read2_mem_addr;
 
 localparam int D_rounded_up = 2**$clog2(D);
 
-ternip_pipelined_mem #(
-    .DATA_WIDTH(FixedPointPrecision * VectorParallelism),
+ternip_dual_port_mem #(
+    .DATA_WIDTH($bits(read_data_o)),
     .NUM_ENTRIES(NumVectorRegisters * D_rounded_up / VectorParallelism),
-    .DECOUPLED_READY(1)
-) pipelined_mem (
+    .UNCOUPLED_READY(1)
+) dual_port_mem (
     .clk_i,
     .rst_ni,
 
-    .request_ready_o,
-    .request_valid_i,
-    .request_write_not_read_i,
-    .request_addr_i(request_mem_addr),
-    .request_w_data_i,
+    .a_request_ready_o(request_ready_o),
+    .a_request_valid_i(request_valid_i),
+    .a_request_write_not_read_i(request_write_not_read_i),
+    .a_request_addr_i(request_mem_addr),
+    .a_request_w_data_i(request_w_data_i),
 
-    .read_ready_i,
-    .read_valid_o,
-    .read_addr_o(read_mem_addr),
-    .read_data_o
+    .a_read_ready_i(read_ready_i),
+    .a_read_valid_o(read_valid_o),
+    .a_read_addr_o(read_mem_addr),
+    .a_read_data_o(read_data_o),
+
+    .b_request_ready_o(request2_ready_o),
+    .b_request_valid_i(request2_valid_i),
+    .b_request_write_not_read_i(request2_write_not_read_i),
+    .b_request_addr_i(request2_mem_addr),
+    .b_request_w_data_i(request2_w_data_i),
+
+    .b_read_ready_i(read2_ready_i),
+    .b_read_valid_o(read2_valid_o),
+    .b_read_addr_o(read2_mem_addr),
+    .b_read_data_o(read2_data_o)
 );
 
 endmodule
