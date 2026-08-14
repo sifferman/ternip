@@ -423,7 +423,8 @@ for (genvar i_GEN = 0; i_GEN < Cfg.VectorParallelism; i_GEN++) begin
         .InBExponent(Cfg.FixedPointExponent),
         .OutPrecision(Cfg.FixedPointPrecision),
         .OutExponent(Cfg.FixedPointExponent),
-        .Implementation(Cfg.MultiplicationImplementation)
+        .Implementation(Cfg.MultiplicationImplementation),
+        .FinalConversionNumPipelineStages(2)
     ) mul (
         .clk_i,
         .rst_ni,

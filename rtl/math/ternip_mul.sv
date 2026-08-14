@@ -41,7 +41,8 @@ module ternip_mul #(
     parameter int InBExponent  = Cfg.FixedPointExponent,
     parameter int OutPrecision = Cfg.FixedPointPrecision,
     parameter int OutExponent  = Cfg.FixedPointExponent,
-    parameter ternip_pkg::mul_impl_e Implementation = Cfg.MultiplicationImplementation
+    parameter ternip_pkg::mul_impl_e Implementation = Cfg.MultiplicationImplementation,
+    parameter int FinalConversionNumPipelineStages = 0
 ) (
     input  logic                           clk_i,
     input  logic                           rst_ni,
@@ -63,6 +64,9 @@ logic signed [MulInternalPrecision-1:0] internal_a;
 logic signed [MulInternalPrecision-1:0] internal_b;
 logic signed [MulInternalPrecision-1:0] internal_y;
 
+logic mul_out_valid;
+logic mul_out_ready;
+
 ternip_fixed_point_convert #(
     .InPrecision(InAPrecision),
     .InExponent(InAExponent),
@@ -71,6 +75,10 @@ ternip_fixed_point_convert #(
 ) convert_a (
     .clk_i,
     .rst_ni,
+    .in_valid_i(1'b1),
+    .in_ready_o(),
+    .out_valid_o(),
+    .out_ready_i(1'b1),
     .in(a_i),
     .out(internal_a)
 );
@@ -83,6 +91,10 @@ ternip_fixed_point_convert #(
 ) convert_b (
     .clk_i,
     .rst_ni,
+    .in_valid_i(1'b1),
+    .in_ready_o(),
+    .out_valid_o(),
+    .out_ready_i(1'b1),
     .in(b_i),
     .out(internal_b)
 );
@@ -91,12 +103,17 @@ ternip_fixed_point_convert #(
     .InPrecision(MulInternalPrecision),
     .InExponent(PostMulInternalExponent),
     .OutPrecision(OutPrecision),
-    .OutExponent(OutExponent)
+    .OutExponent(OutExponent),
+    .NumPipelineStages(FinalConversionNumPipelineStages)
 ) convert_y (
     .clk_i,
     .rst_ni,
     .in(internal_y),
-    .out(y_o)
+    .in_valid_i(mul_out_valid),
+    .in_ready_o(mul_out_ready),
+    .out(y_o),
+    .out_valid_o(out_valid_o),
+    .out_ready_i(out_ready_i)
 );
 
 if (Implementation == ternip_pkg::MUL_BSG) begin : mul_bsg
@@ -116,9 +133,9 @@ if (Implementation == ternip_pkg::MUL_BSG) begin : mul_bsg
         .signed_opB_i(1),
         .gets_high_part_i(0),
 
-        .v_o(out_valid_o),
+        .v_o(mul_out_valid),
         .result_o(internal_y),
-        .yumi_i(out_ready_i && out_valid_o)
+        .yumi_i(mul_out_ready && mul_out_valid)
     );
 
 end else if (Implementation == ternip_pkg::MUL_ROUNDROBIN) begin : mul_roundrobin
@@ -136,8 +153,8 @@ end else if (Implementation == ternip_pkg::MUL_ROUNDROBIN) begin : mul_roundrobi
         .a_i(internal_a),
         .b_i(internal_b),
 
-        .out_ready_i,
-        .out_valid_o,
+        .out_ready_i(mul_out_ready),
+        .out_valid_o(mul_out_valid),
         .out_div_remainder_o(),
         .y_o(internal_y)
     );
@@ -155,15 +172,15 @@ end else if (Implementation == ternip_pkg::MUL_STAR) begin : mul_star
         .a_i(internal_a),
         .b_i(internal_b),
 
-        .out_ready_i,
-        .out_valid_o,
+        .out_ready_i(mul_out_ready),
+        .out_valid_o(mul_out_valid),
         .y_o(internal_y)
     );
 
 end else begin
 
     assign in_ready_o = 1;
-    assign out_valid_o = 1;
+    assign mul_out_valid = 1;
 
 end
 

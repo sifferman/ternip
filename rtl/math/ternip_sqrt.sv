@@ -72,6 +72,10 @@ ternip_fixed_point_convert #(
 ) convert_a (
     .clk_i,
     .rst_ni,
+    .in_valid_i(1'b1),
+    .in_ready_o(),
+    .out_valid_o(),
+    .out_ready_i(1'b1),
     .in(a_i),
     .out(internal_a)
 );
@@ -84,6 +88,10 @@ ternip_fixed_point_convert #(
 ) convert_y (
     .clk_i,
     .rst_ni,
+    .in_valid_i(1'b1),
+    .in_ready_o(),
+    .out_valid_o(),
+    .out_ready_i(1'b1),
     .in(internal_y),
     .out(y_o)
 );

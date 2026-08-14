@@ -119,7 +119,8 @@ if (UseHardSigmoid) begin : gen_hard_silu
         .InBExponent(FixedPointExponent),
         .OutPrecision(FixedPointPrecision),
         .OutExponent(FixedPointExponent),
-        .Implementation(MultiplicationImplementation)
+        .Implementation(MultiplicationImplementation),
+        .FinalConversionNumPipelineStages(2)
     ) mul (
         .clk_i,
         .rst_ni,
