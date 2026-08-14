@@ -75,11 +75,12 @@ ternip_types#(Cfg)::vector_select_t in_vector1_select_d, in_vector1_select_q;
 ternip_types#(Cfg)::vector_select_t in_vector2_select_d, in_vector2_select_q;
 ternip_types#(Cfg)::immediate_t     in_rms_length_d, in_rms_length_q;
 
-enum logic [1:0] {
+enum logic [2:0] {
     WAITING_FOR_IN,
     WORKING,
     SENDING_FINAL_TO_ACCUMULATOR,
-    WAITING_FOR_ACCUMULATOR
+    WAITING_FOR_ACCUMULATOR,
+    SENDING_TO_DIVIDER
 } state_d, state_q = WAITING_FOR_IN;
 
 logic [$clog2(ternip_types#(Cfg)::NumChunksPerVector):0] vector_read_counter_d, vector_read_counter_q;
@@ -119,7 +120,8 @@ for (genvar i_GEN = 0; i_GEN < Cfg.VectorParallelism; i_GEN++) begin : parallel_
         .InBPrecision(Cfg.FixedPointPrecision),
         .InBExponent(Cfg.FixedPointExponent),
         .OutPrecision(ternip_types#(Cfg)::RmsSqaSumPrecision),
-        .OutExponent(ternip_types#(Cfg)::RmsSqaSumExponent)
+        .OutExponent(ternip_types#(Cfg)::RmsSqaSumExponent),
+        .FinalConversionNumPipelineStages(2)
     ) square (
         .clk_i,
         .rst_ni,
@@ -196,6 +198,10 @@ logic                                 div_in_ready;
 logic                                 div_in_valid;
 ternip_types#(Cfg)::immediate_t       div_in_dividend;
 ternip_types#(Cfg)::rms_accumulator_t div_in_divisor;
+
+// Register dividend/divisor to break the MOA -> divider combinational path.
+ternip_types#(Cfg)::immediate_t       div_captured_dividend_d, div_captured_dividend_q;
+ternip_types#(Cfg)::rms_accumulator_t div_captured_divisor_d,  div_captured_divisor_q;
 
 logic                                div_out_ready;
 logic                                div_out_valid;
@@ -291,7 +297,8 @@ for (genvar i_GEN = 0; i_GEN < Cfg.VectorParallelism; i_GEN++) begin : parallel_
         .InBPrecision(ternip_types#(Cfg)::RmsValueReciprocalPrecision),
         .InBExponent(ternip_types#(Cfg)::RmsValueReciprocalExponent),
         .OutPrecision(Cfg.FixedPointPrecision),
-        .OutExponent(Cfg.FixedPointExponent)
+        .OutExponent(Cfg.FixedPointExponent),
+        .FinalConversionNumPipelineStages(2)
     ) norm_mul (
         .clk_i,
         .rst_ni,
@@ -341,6 +348,9 @@ always_comb begin
     div_in_valid = 0;
     div_in_dividend = 'x;
     div_in_divisor = 'x;
+
+    div_captured_dividend_d = div_captured_dividend_q;
+    div_captured_divisor_d  = div_captured_divisor_q;
 
     rms_value_reciprocal_d = rms_value_reciprocal_q;
     rms_value_reciprocal_valid_d = rms_value_reciprocal_valid_q;
@@ -436,16 +446,23 @@ always_comb begin
             state_d = WAITING_FOR_ACCUMULATOR;
         end
     end else if ((state_q == WAITING_FOR_ACCUMULATOR) && (rms_op_q == ternip_pkg::FINISH_ACCUMULATE)) begin
-        accumulator_out_ready = div_in_ready;
+        accumulator_out_ready = 1;
         if (accumulator_out_valid) begin
-            state_d = WORKING;
-            div_in_valid = 1;
+            state_d = SENDING_TO_DIVIDER;
             `ifndef SYNTHESIS
             assert(!rst_ni || $isunknown(in_rms_length_q) || (in_rms_length_q > 0));
             assert(!rst_ni || $isunknown(accumulator_out_result) || (accumulator_out_result >= 0)) else $fatal(0, "accumulator_out_result=%b", accumulator_out_result);
             `endif
-            div_in_dividend = in_rms_length_q;
-            div_in_divisor = (accumulator_out_result <= 0) ? 1 /* TODO */ : accumulator_out_result;
+            div_captured_dividend_d = in_rms_length_q;
+            div_captured_divisor_d  = (accumulator_out_result <= 0) ? 1 /* TODO */ : accumulator_out_result;
+        end
+    end else if ((state_q == SENDING_TO_DIVIDER) && (rms_op_q == ternip_pkg::FINISH_ACCUMULATE)) begin
+        // Drive the divider from the pipeline registers (breaks the MOA->div_bsg comb path).
+        div_in_valid = 1;
+        div_in_dividend = div_captured_dividend_q;
+        div_in_divisor  = div_captured_divisor_q;
+        if (div_in_ready) begin
+            state_d = WORKING;
         end
     end else if ((state_q == WORKING) && (rms_op_q == ternip_pkg::FINISH_ACCUMULATE)) begin
         // wait for rms_value_reciprocal_divider -> ternip_sqrt -> valid
@@ -529,6 +546,9 @@ always_ff @(posedge clk_i) begin
 
     rms_value_reciprocal_q <= rms_value_reciprocal_d;
     norm_mul_out_result_buffer_q <= norm_mul_out_result_buffer_d;
+
+    div_captured_dividend_q <= div_captured_dividend_d;
+    div_captured_divisor_q  <= div_captured_divisor_d;
     `ifndef SYNTHESIS
     if (!rst_ni) begin
         rms_op_q <= ternip_pkg::NO_RMS_OP;
