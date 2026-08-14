@@ -115,6 +115,37 @@ enum logic [1:0] {
 } state_d, state_q = WAITING_FOR_IN; // for assertions at time=0
 
 ternip_pkg::tmatmul_op_e tmatmul_operation_d, tmatmul_operation_q;
+
+// =========================================================================
+// Manual forward retiming of state_q and tmatmul_operation_q to avoid high fanout in the FSM
+logic in_state_working_import_d, in_state_working_import_q;
+logic in_state_working_go_d, in_state_working_go_q;
+logic in_state_working_export_d, in_state_working_export_q;
+logic in_state_waiting_for_in_d, in_state_waiting_for_in_q;
+logic in_state_waiting_for_ddr_go_d, in_state_waiting_for_ddr_go_q;
+
+assign in_state_working_import_d     = (state_d == WORKING) && (tmatmul_operation_d == ternip_pkg::IMPORT);
+assign in_state_working_go_d         = (state_d == WORKING) && (tmatmul_operation_d == ternip_pkg::GO);
+assign in_state_working_export_d     = (state_d == WORKING) && (tmatmul_operation_d == ternip_pkg::EXPORT);
+assign in_state_waiting_for_in_d     = (state_d == WAITING_FOR_IN);
+assign in_state_waiting_for_ddr_go_d = (state_d == WAITING_FOR_DDR_STREAM_READY) && (tmatmul_operation_d == ternip_pkg::GO);
+always_ff @(posedge clk_i) begin
+    if (!rst_ni) begin
+        in_state_working_import_q     <= '0;
+        in_state_working_go_q         <= '0;
+        in_state_working_export_q     <= '0;
+        in_state_waiting_for_in_q     <= '1;
+        in_state_waiting_for_ddr_go_q <= '0;
+    end else begin
+        in_state_working_import_q     <= in_state_working_import_d;
+        in_state_working_go_q         <= in_state_working_go_d;
+        in_state_working_export_q     <= in_state_working_export_d;
+        in_state_waiting_for_in_q     <= in_state_waiting_for_in_d;
+        in_state_waiting_for_ddr_go_q <= in_state_waiting_for_ddr_go_d;
+    end
+end
+// =========================================================================
+
 ternip_types#(Cfg)::vector_select_t vector_select_d, vector_select_q;
 
 localparam int DdrReadsPerMatrix = (Cfg.D*Cfg.D) / Cfg.TmatmulParallelism;
@@ -330,7 +361,8 @@ always_comb begin
     gbfifo_export_in_data = 'x;
     gbfifo_export_out_ready = 0;
 
-    if (state_q == WAITING_FOR_IN) begin
+    // if (state_q == WAITING_FOR_IN) begin // manual forward retiming
+    if (in_state_waiting_for_in_q) begin
 
         in_ready_o = !queued_valid_q;
 
@@ -359,7 +391,8 @@ always_comb begin
             state_d = (tmatmul_operation_d == ternip_pkg::GO) ? (WAITING_FOR_DDR_STREAM_READY) : (WORKING);
         end
 
-    end else if ((state_q == WAITING_FOR_DDR_STREAM_READY) && (tmatmul_operation_q == ternip_pkg::GO)) begin
+    // end else if ((state_q == WAITING_FOR_DDR_STREAM_READY) && (tmatmul_operation_q == ternip_pkg::GO)) begin // manual forward retiming
+    end else if (in_state_waiting_for_ddr_go_q) begin
 
         ddr_stream_valid_o = 1;
         if (ddr_stream_ready_i) begin
@@ -367,8 +400,8 @@ always_comb begin
             state_d = WORKING;
         end
 
-    end else if ((state_q == WORKING) && (tmatmul_operation_q == ternip_pkg::IMPORT)) begin
-
+    // end else if ((state_q == WORKING) && (tmatmul_operation_q == ternip_pkg::IMPORT)) begin // manual forward retiming
+    end if (in_state_working_import_q) begin
         // Request chunks from vector registers
         if (importvector_counter_q < ternip_types#(Cfg)::NumChunksPerVector) begin
             vector_request_valid_o = 1;
@@ -398,7 +431,8 @@ always_comb begin
             end
         end
 
-    end else if ((state_q == WORKING) && (tmatmul_operation_q == ternip_pkg::GO)) begin
+    // end else if ((state_q == WORKING) && (tmatmul_operation_q == ternip_pkg::GO)) begin // manual forward retiming
+    end else if (in_state_working_go_q) begin
 
         // allow instruction queueing
         in_ready_o = !queued_valid_q;
@@ -459,7 +493,8 @@ always_comb begin
             end
         end
 
-    end else if ((state_q == WORKING) && (tmatmul_operation_q == ternip_pkg::EXPORT)) begin
+    // end else if ((state_q == WORKING) && (tmatmul_operation_q == ternip_pkg::EXPORT)) begin // manual forward retiming
+    end else if (in_state_working_export_q) begin
 
         // Read chunks from exportvector
         if (exportvector_counter_q < ternip_types#(Cfg)::NumChunksPerVector) begin
