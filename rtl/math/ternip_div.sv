@@ -67,6 +67,8 @@ logic signed [DivInternalPrecision-1:0] internal_a;
 logic signed [DivInternalPrecision-1:0] internal_b;
 logic signed [DivInternalPrecision-1:0] internal_y;
 
+logic                           raw_in_ready;
+logic                           raw_in_valid;
 logic                           div_out_valid;
 logic                           div_out_ready;
 logic signed [OutPrecision-1:0] convert_out_y;
@@ -107,18 +109,49 @@ ternip_fixed_point_convert #(
     .out(convert_out_y)
 );
 
-// Output pipeline register — breaks combinational path from divider to y_o
-assign div_out_ready = out_ready_i || !out_valid_o;
+// Fixed-latency equalizer: the iterative divider takes a data-dependent number of
+// cycles, which would desync callers that run several dividers in lockstep. The
+// divider holds its quotient until yumi, so a single counter just delays the result
+// by a fixed, data-independent number of cycles -- long enough that every divide is done.
+localparam int RawDivideLatencyUpperBound = DivInternalPrecision + 16;
+localparam int EqualizerCounterWidth = $clog2(RawDivideLatencyUpperBound + 1);
 
-always_ff @(posedge clk_i) begin
-    if (!rst_ni) begin
-        out_valid_o <= 1'b0;
-        y_o <= '0;
-    end else if (div_out_ready) begin
-        out_valid_o <= div_out_valid;
-        y_o <= convert_out_y;
+// counter == 0 is idle; a divide counts to RawDivideLatencyUpperBound, then signals done.
+logic [EqualizerCounterWidth-1:0] equalizer_counter_d, equalizer_counter_q;
+wire equalizer_idle = (equalizer_counter_q == '0);
+wire equalizer_done = (equalizer_counter_q >= EqualizerCounterWidth'(RawDivideLatencyUpperBound));
+
+assign raw_in_valid  = in_valid_i && equalizer_idle;
+assign in_ready_o    = raw_in_ready && equalizer_idle;
+assign div_out_ready = equalizer_done && out_ready_i;
+assign out_valid_o   = equalizer_done;
+assign y_o           = convert_out_y;
+
+always_comb begin
+    equalizer_counter_d = equalizer_counter_q;
+    if (equalizer_idle) begin
+        if (in_valid_i && in_ready_o) equalizer_counter_d = 1;
+    end else if (equalizer_done) begin
+        if (out_ready_i) equalizer_counter_d = '0;
+    end else begin
+        equalizer_counter_d = equalizer_counter_q + 1;
     end
 end
+
+always_ff @(posedge clk_i) begin
+    if (!rst_ni) equalizer_counter_q <= '0;
+    else         equalizer_counter_q <= equalizer_counter_d;
+end
+
+`ifndef SYNTHESIS
+// The fixed window must be long enough that the raw quotient always arrives
+// before it elapses; otherwise the latency would become data-dependent again.
+always @(posedge clk_i) if (rst_ni) begin
+    assert (!equalizer_done || div_out_valid)
+        else $fatal(0, "ternip_div equalizer window (%0d) shorter than raw divide latency",
+                    RawDivideLatencyUpperBound);
+end
+`endif
 
 if (Implementation == ternip_pkg::DIV_BSG) begin : div_bsg
 
@@ -129,8 +162,8 @@ if (Implementation == ternip_pkg::DIV_BSG) begin : div_bsg
     ) bsg_idiv_iterative (
         .clk_i,
         .reset_i(!rst_ni),
-        .v_i(in_valid_i),
-        .ready_and_o(in_ready_o),
+        .v_i(raw_in_valid),
+        .ready_and_o(raw_in_ready),
 
         .dividend_i(internal_a),
         .divisor_i(internal_b),
@@ -151,8 +184,8 @@ end else if (Implementation == ternip_pkg::DIV_ROUNDROBIN) begin : div_roundrobi
     ) integer_divider (
         .clk_i,
         .rst_ni,
-        .in_ready_o,
-        .in_valid_i,
+        .in_ready_o(raw_in_ready),
+        .in_valid_i(raw_in_valid),
         .a_i(internal_a),
         .b_i(internal_b),
         .out_ready_i(div_out_ready),
@@ -163,7 +196,7 @@ end else if (Implementation == ternip_pkg::DIV_ROUNDROBIN) begin : div_roundrobi
 
 end else begin
 
-    assign in_ready_o = 1;
+    assign raw_in_ready = 1;
     assign div_out_valid = 1;
     assign internal_y = 'x;
 
