@@ -32,8 +32,9 @@
 // This is combinational: drive a_i and b_i, then use y_o in the same cycle.
 
 module ternip_add #(
-    parameter int FixedPointPrecision = ternip_pkg::FixedPointPrecision,
-    localparam type fixed_point_t = logic signed [ternip_pkg::FixedPointPrecision-1:0]
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG,
+    parameter int FixedPointPrecision = Cfg.FixedPointPrecision,
+    localparam type fixed_point_t = logic signed [FixedPointPrecision-1:0]
 ) (
     input  fixed_point_t a_i,
     input  fixed_point_t b_i,

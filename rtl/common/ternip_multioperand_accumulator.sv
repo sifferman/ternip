@@ -41,11 +41,13 @@
 `define SIGN_EXTEND(X, FROM, TO) (TO'({ {$bits(TO){X[$bits(FROM)-1]}}, X }))
 
 module ternip_multioperand_accumulator #(
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG,
+
     parameter type operand_t = logic signed [8:0],
-    parameter type result_t = ternip_pkg::fixed_point_t,
+    parameter type result_t = ternip_types#(Cfg)::fixed_point_t,
     parameter int NUM_OPERANDS = 16,
     parameter int NEXT_STAGE_FANIN = 4,
-    parameter int D = ternip_pkg::D
+    parameter int D = Cfg.D
 ) (
     input  logic                        clk_i,
     input  logic                        rst_ni,

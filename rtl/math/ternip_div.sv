@@ -33,13 +33,15 @@
 // saturation. Implementation selects BSG, round-robin, or placeholder behavior.
 
 module ternip_div #(
-    parameter int InAPrecision = ternip_pkg::FixedPointPrecision,
-    parameter int InAExponent  = ternip_pkg::FixedPointExponent,
-    parameter int InBPrecision = ternip_pkg::FixedPointPrecision,
-    parameter int InBExponent  = ternip_pkg::FixedPointExponent,
-    parameter int OutPrecision = ternip_pkg::FixedPointPrecision,
-    parameter int OutExponent  = ternip_pkg::FixedPointExponent,
-    parameter ternip_pkg::div_impl_e Implementation = ternip_pkg::DivisionImplementation
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG,
+
+    parameter int InAPrecision = Cfg.FixedPointPrecision,
+    parameter int InAExponent  = Cfg.FixedPointExponent,
+    parameter int InBPrecision = Cfg.FixedPointPrecision,
+    parameter int InBExponent  = Cfg.FixedPointExponent,
+    parameter int OutPrecision = Cfg.FixedPointPrecision,
+    parameter int OutExponent  = Cfg.FixedPointExponent,
+    parameter ternip_pkg::div_impl_e Implementation = Cfg.DivisionImplementation
 ) (
     input  logic                           clk_i,
     input  logic                           rst_ni,

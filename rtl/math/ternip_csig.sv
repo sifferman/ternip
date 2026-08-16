@@ -35,11 +35,13 @@
 // This is combinational.
 
 module ternip_csig #(
-    parameter int  FixedPointPrecision = ternip_pkg::FixedPointPrecision,
-    parameter int  FixedPointExponent  = ternip_pkg::FixedPointExponent,
-    parameter bit  UseHardSigmoid      = ternip_pkg::UseHardSigmoid,
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG,
 
-    localparam type fixed_point_t = logic signed [ternip_pkg::FixedPointPrecision-1:0]
+    parameter int  FixedPointPrecision = Cfg.FixedPointPrecision,
+    parameter int  FixedPointExponent  = Cfg.FixedPointExponent,
+    parameter bit  UseHardSigmoid      = Cfg.UseHardSigmoid,
+
+    localparam type fixed_point_t = logic signed [FixedPointPrecision-1:0]
 ) (
     input  fixed_point_t a_i,
     output fixed_point_t y_o

@@ -34,12 +34,14 @@
 // first-order approximation. Otherwise it reads a precomputed LUT.
 
 module ternip_silu #(
-    parameter int FixedPointPrecision = ternip_pkg::FixedPointPrecision,
-    parameter int FixedPointExponent  = ternip_pkg::FixedPointExponent,
-    parameter bit UseHardSigmoid      = ternip_pkg::UseHardSigmoid,
-    parameter ternip_pkg::mul_impl_e MultiplicationImplementation = ternip_pkg::MultiplicationImplementation,
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG,
 
-    localparam type fixed_point_t = logic signed [ternip_pkg::FixedPointPrecision-1:0]
+    parameter int FixedPointPrecision = Cfg.FixedPointPrecision,
+    parameter int FixedPointExponent  = Cfg.FixedPointExponent,
+    parameter bit UseHardSigmoid      = Cfg.UseHardSigmoid,
+    parameter ternip_pkg::mul_impl_e MultiplicationImplementation = Cfg.MultiplicationImplementation,
+
+    localparam type fixed_point_t = logic signed [FixedPointPrecision-1:0]
 ) (
     input  logic         clk_i,
     input  logic         rst_ni,

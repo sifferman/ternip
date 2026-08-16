@@ -42,78 +42,64 @@
 `define SAFE_CLOG2(x) ( (((x)==1) || ((x)==0))? 1 : $clog2((x)))
 
 module ternip_tmatmul #(
-    parameter int D                   = ternip_pkg::D,
-    parameter int TmatmulParallelism  = ternip_pkg::TmatmulParallelism,
-    parameter int FixedPointPrecision = ternip_pkg::FixedPointPrecision,
-    parameter int VectorParallelism   = ternip_pkg::VectorParallelism,
-    parameter int NumVectorRegisters  = ternip_pkg::NumVectorRegisters,
-    parameter int NumChunksPerVector  = ternip_pkg::NumChunksPerVector,
-    parameter int DdrAddressWidth     = ternip_pkg::DdrAddressWidth,
-    parameter int MatrixSizeInBytes   = ternip_pkg::MatrixSizeInBytes,
-
-    localparam type fixed_point_t     = logic signed [ternip_pkg::FixedPointPrecision-1:0],
-    localparam type vector_chunk_t    = fixed_point_t [VectorParallelism-1:0],
-    localparam type ternary_t         = logic signed [1:0],
-    localparam type vector_offset_t   = logic [$clog2(NumChunksPerVector)-1:0],
-    localparam type vector_select_t   = logic [$clog2(NumVectorRegisters)-1:0],
-    localparam type ddr_address_t     = logic [DdrAddressWidth-1:0]
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG
 ) (
-    input logic                     clk_i,
-    input logic                     rst_ni,
+    input  logic                                              clk_i,
+    input  logic                                              rst_ni,
 
-    output logic                    in_ready_o,
-    input  logic                    in_valid_i,
-    input  ternip_pkg::tmatmul_op_e in_operation_i,
-    input  vector_select_t          in_vector_select_i,
-    input  ddr_address_t            in_go_matrix_address_i,
+    output logic                                              in_ready_o,
+    input  logic                                              in_valid_i,
+    input  ternip_pkg::tmatmul_op_e                           in_operation_i,
+    input  ternip_types#(Cfg)::vector_select_t                in_vector_select_i,
+    input  ternip_types#(Cfg)::ddr_address_t                  in_go_matrix_address_i,
 
     // vector request interface
-    input  logic                    vector_request_ready_i,
-    output logic                    vector_request_valid_o,
-    output logic                    vector_request_write_not_read_o,
-    output vector_select_t          vector_request_vector_select_o,
-    output vector_offset_t          vector_request_vector_addr_o,
-    output vector_chunk_t           vector_request_w_data_o,
+    input  logic                                              vector_request_ready_i,
+    output logic                                              vector_request_valid_o,
+    output logic                                              vector_request_write_not_read_o,
+    output ternip_types#(Cfg)::vector_select_t                vector_request_vector_select_o,
+    output ternip_types#(Cfg)::vector_offset_t                vector_request_vector_addr_o,
+    output ternip_types#(Cfg)::vector_chunk_t                 vector_request_w_data_o,
 
     // vector read interface
-    output logic                    vector_read_ready_o,
-    input  logic                    vector_read_valid_i,
-    input  vector_offset_t          vector_read_addr_i,
-    input  vector_chunk_t           vector_read_data_i,
+    output logic                                              vector_read_ready_o,
+    input  logic                                              vector_read_valid_i,
+    input  ternip_types#(Cfg)::vector_offset_t                vector_read_addr_i,
+    input  ternip_types#(Cfg)::vector_chunk_t                 vector_read_data_i,
 
     // ddr stream start config
-    input  logic                    ddr_stream_ready_i,
-    output logic                    ddr_stream_valid_o,
-    output ddr_address_t            ddr_stream_address_o,
-    output logic [31:0]             ddr_stream_length_o,
+    input  logic                                              ddr_stream_ready_i,
+    output logic                                              ddr_stream_valid_o,
+    output ternip_types#(Cfg)::ddr_address_t                  ddr_stream_address_o,
+    output logic [31:0]                                       ddr_stream_length_o,
 
     // read data is streamed in sequentially
-    output logic                              ddr_r_ready_o,
-    input  logic                              ddr_r_valid_i,
-    input  ternary_t [TmatmulParallelism-1:0] ddr_r_data_i
+    output logic                                              ddr_r_ready_o,
+    input  logic                                              ddr_r_valid_i,
+    input  ternip_pkg::ternary_t [Cfg.TmatmulParallelism-1:0] ddr_r_data_i
 );
 
-localparam int RowParallelism = (TmatmulParallelism < D) ? (1) : (TmatmulParallelism / D);
-localparam int DdrReadsPerRow = (TmatmulParallelism > D) ? (1) : (D / TmatmulParallelism);
-localparam int ImportVectorRowWidth = ternip_pkg::min_int(TmatmulParallelism, D);
+localparam int RowParallelism = (Cfg.TmatmulParallelism < Cfg.D) ? (1) : (Cfg.TmatmulParallelism / Cfg.D);
+localparam int DdrReadsPerRow = (Cfg.TmatmulParallelism > Cfg.D) ? (1) : (Cfg.D / Cfg.TmatmulParallelism);
+localparam int ImportVectorRowWidth = ternip_pkg::min_int(Cfg.TmatmulParallelism, Cfg.D);
 
 `ifndef SYNTHESIS
 initial begin
-    if (TmatmulParallelism < D) begin
-        assert(DdrReadsPerRow * TmatmulParallelism == D) else begin
-            $fatal("TmatmulParallelism (%0d) must divide evenly into D (%0d)", TmatmulParallelism, D);
+    if (Cfg.TmatmulParallelism < Cfg.D) begin
+        assert(DdrReadsPerRow * Cfg.TmatmulParallelism == Cfg.D) else begin
+            $fatal("Cfg.TmatmulParallelism (%0d) must divide evenly into Cfg.D (%0d)", Cfg.TmatmulParallelism, Cfg.D);
         end
     end else begin
-        assert(RowParallelism * D == TmatmulParallelism) else begin
-            $fatal("D (%0d) must divide evenly into TmatmulParallelism (%0d)", D, TmatmulParallelism);
+        assert(RowParallelism * Cfg.D == Cfg.TmatmulParallelism) else begin
+            $fatal("Cfg.D (%0d) must divide evenly into Cfg.TmatmulParallelism (%0d)", Cfg.D, Cfg.TmatmulParallelism);
         end
     end
 end
 `endif
 
-typedef logic signed [FixedPointPrecision:0] tmul_result_t;
+typedef logic signed [Cfg.FixedPointPrecision:0] tmul_result_t;
 
-function automatic tmul_result_t ternary_mul(ternary_t ternary, fixed_point_t fixed_point);
+function automatic tmul_result_t ternary_mul(ternip_pkg::ternary_t ternary, ternip_types#(Cfg)::fixed_point_t fixed_point);
     unique case (ternary)
         0: return '0;
         1: return fixed_point;
@@ -129,33 +115,33 @@ enum logic [1:0] {
 } state_d, state_q = WAITING_FOR_IN; // for assertions at time=0
 
 ternip_pkg::tmatmul_op_e tmatmul_operation_d, tmatmul_operation_q;
-vector_select_t vector_select_d, vector_select_q;
+ternip_types#(Cfg)::vector_select_t vector_select_d, vector_select_q;
 
-localparam int DdrReadsPerMatrix = (D*D) / TmatmulParallelism;
-assign ddr_stream_length_o = MatrixSizeInBytes;
+localparam int DdrReadsPerMatrix = (Cfg.D*Cfg.D) / Cfg.TmatmulParallelism;
+assign ddr_stream_length_o = ternip_types#(Cfg)::MatrixSizeInBytes;
 
 logic [`SAFE_CLOG2(DdrReadsPerMatrix):0] importvector_counter_d, importvector_counter_q;
 logic [`SAFE_CLOG2(DdrReadsPerMatrix):0] exportvector_counter_d, exportvector_counter_q;
-ddr_address_t ddr_stream_address_d, ddr_stream_address_q;
+ternip_types#(Cfg)::ddr_address_t ddr_stream_address_d, ddr_stream_address_q;
 logic [`SAFE_CLOG2(DdrReadsPerRow):0] importvector_request_addr_counter_d, importvector_request_addr_counter_q;
 
-// AXI stream adapter for IMPORT: vector_chunk_t -> fixed_point_t
+// AXI stream adapter for IMPORT: ternip_types#(Cfg)::vector_chunk_t -> ternip_types#(Cfg)::fixed_point_t
 logic gbfifo_import_in_ready;
 logic gbfifo_import_in_valid;
-vector_chunk_t gbfifo_import_in_data;
+ternip_types#(Cfg)::vector_chunk_t gbfifo_import_in_data;
 
 logic gbfifo_import_out_ready;
 logic gbfifo_import_out_valid;
-fixed_point_t [ImportVectorRowWidth-1:0] gbfifo_import_out_data;
+ternip_types#(Cfg)::fixed_point_t [ImportVectorRowWidth-1:0] gbfifo_import_out_data;
 
-// AXI stream adapter for GO (export): fixed_point_t -> vector_chunk_t
+// AXI stream adapter for GO (export): ternip_types#(Cfg)::fixed_point_t -> ternip_types#(Cfg)::vector_chunk_t
 logic gbfifo_export_in_ready;
 logic gbfifo_export_in_valid;
-fixed_point_t [RowParallelism-1:0] gbfifo_export_in_data;
+ternip_types#(Cfg)::fixed_point_t [RowParallelism-1:0] gbfifo_export_in_data;
 
 logic gbfifo_export_out_ready;
 logic gbfifo_export_out_valid;
-vector_chunk_t gbfifo_export_out_data;
+ternip_types#(Cfg)::vector_chunk_t gbfifo_export_out_data;
 
 // IMPORT BRAM write tracking
 logic [`SAFE_CLOG2(DdrReadsPerRow):0] import_bram_addr_d, import_bram_addr_q;
@@ -163,20 +149,20 @@ logic [`SAFE_CLOG2(DdrReadsPerRow):0] import_bram_addr_d, import_bram_addr_q;
 // Queued Instruction
 logic queued_valid_d, queued_valid_q;
 ternip_pkg::tmatmul_op_e queued_operation_d, queued_operation_q;
-vector_select_t queued_vector_select_d, queued_vector_select_q;
-ddr_address_t queued_go_matrix_address_d, queued_go_matrix_address_q;
+ternip_types#(Cfg)::vector_select_t queued_vector_select_d, queued_vector_select_q;
+ternip_types#(Cfg)::ddr_address_t queued_go_matrix_address_d, queued_go_matrix_address_q;
 
 // Multioperand Accumulator
 logic accumulator_in_valid, accumulator_in_final, accumulator_out_ready;
 tmul_result_t [RowParallelism-1:0][ImportVectorRowWidth-1:0] accumulator_operands;
 logic [RowParallelism-1:0] accumulator_in_ready, accumulator_out_valid;
-fixed_point_t [RowParallelism-1:0] accumulator_result;
+ternip_types#(Cfg)::fixed_point_t [RowParallelism-1:0] accumulator_result;
 
 for (genvar i_GEN = 0; i_GEN < RowParallelism; i_GEN++) begin : row
 
     ternip_multioperand_accumulator #(
         .operand_t(tmul_result_t),
-        .result_t(fixed_point_t),
+        .result_t(ternip_types#(Cfg)::fixed_point_t),
         .NUM_OPERANDS(ImportVectorRowWidth),
         .NEXT_STAGE_FANIN(2)
     ) multioperand_accumulator (
@@ -198,10 +184,10 @@ logic importvector_request_ready;
 logic importvector_request_valid;
 logic importvector_request_write_not_read;
 logic [`SAFE_CLOG2(DdrReadsPerRow)-1:0] importvector_request_addr;
-fixed_point_t [ImportVectorRowWidth-1:0] importvector_request_w_data;
+ternip_types#(Cfg)::fixed_point_t [ImportVectorRowWidth-1:0] importvector_request_w_data;
 
 logic importvector_read_ready;
-fixed_point_t [ImportVectorRowWidth-1:0] importvector_read_data;
+ternip_types#(Cfg)::fixed_point_t [ImportVectorRowWidth-1:0] importvector_read_data;
 logic importvector_read_valid;
 logic [`SAFE_CLOG2(DdrReadsPerRow)-1:0] importvector_read_addr;
 
@@ -228,17 +214,17 @@ ternip_pipelined_mem #(
 logic exportvector_request_ready;
 logic exportvector_request_valid;
 logic exportvector_request_write_not_read;
-logic [`SAFE_CLOG2(NumChunksPerVector)-1:0] exportvector_request_addr;
-vector_chunk_t exportvector_request_w_data;
+logic [`SAFE_CLOG2(ternip_types#(Cfg)::NumChunksPerVector)-1:0] exportvector_request_addr;
+ternip_types#(Cfg)::vector_chunk_t exportvector_request_w_data;
 
 logic exportvector_read_ready;
 logic exportvector_read_valid;
-logic [`SAFE_CLOG2(NumChunksPerVector)-1:0] exportvector_read_addr;
-vector_chunk_t exportvector_read_data;
+logic [`SAFE_CLOG2(ternip_types#(Cfg)::NumChunksPerVector)-1:0] exportvector_read_addr;
+ternip_types#(Cfg)::vector_chunk_t exportvector_read_data;
 
 ternip_pipelined_mem #(
     .DATA_WIDTH($bits(exportvector_read_data)),
-    .NUM_ENTRIES(NumChunksPerVector)
+    .NUM_ENTRIES(ternip_types#(Cfg)::NumChunksPerVector)
 ) exportvector (
     .clk_i,
     .rst_ni,
@@ -255,7 +241,7 @@ ternip_pipelined_mem #(
     .read_data_o(exportvector_read_data)
 );
 
-// IMPORT gearbox_fifo: vector_chunk_t -> fixed_point_t [TmatmulParallelism-1:0]
+// IMPORT gearbox_fifo: ternip_types#(Cfg)::vector_chunk_t -> ternip_types#(Cfg)::fixed_point_t [Cfg.TmatmulParallelism-1:0]
 ternip_gearbox_fifo #(
     .InDataWidth($bits(gbfifo_import_in_data)),
     .OutDataWidth($bits(gbfifo_import_out_data))
@@ -272,7 +258,7 @@ ternip_gearbox_fifo #(
     .out_data_o(gbfifo_import_out_data)
 );
 
-// EXPORT (GO) gearbox_fifo: fixed_point_t -> vector_chunk_t
+// EXPORT (GO) gearbox_fifo: ternip_types#(Cfg)::fixed_point_t -> ternip_types#(Cfg)::vector_chunk_t
 ternip_gearbox_fifo #(
     .InDataWidth($bits(gbfifo_export_in_data)),
     .OutDataWidth($bits(gbfifo_export_out_data))
@@ -384,7 +370,7 @@ always_comb begin
     end else if ((state_q == WORKING) && (tmatmul_operation_q == ternip_pkg::IMPORT)) begin
 
         // Request chunks from vector registers
-        if (importvector_counter_q < NumChunksPerVector) begin
+        if (importvector_counter_q < ternip_types#(Cfg)::NumChunksPerVector) begin
             vector_request_valid_o = 1;
             vector_request_write_not_read_o = 0;
             vector_request_vector_select_o = vector_select_q;
@@ -443,8 +429,8 @@ always_comb begin
                 importvector_read_ready = '1;
 
                 accumulator_in_valid = 1;
-                for (int i = 0; i < TmatmulParallelism; i++) begin
-                    accumulator_operands[i / D][i % D] = ternary_mul(ddr_r_data_i[i], importvector_read_data[i % D]);
+                for (int i = 0; i < Cfg.TmatmulParallelism; i++) begin
+                    accumulator_operands[i / Cfg.D][i % Cfg.D] = ternary_mul(ddr_r_data_i[i], importvector_read_data[i % Cfg.D]);
                 end
                 if (importvector_read_addr >= DdrReadsPerRow-1) begin
                     accumulator_in_final = 1;
@@ -466,7 +452,7 @@ always_comb begin
             exportvector_request_w_data = gbfifo_export_out_data;
 
             exportvector_counter_d++;
-            if (exportvector_counter_q >= NumChunksPerVector-1) begin
+            if (exportvector_counter_q >= ternip_types#(Cfg)::NumChunksPerVector-1) begin
                 state_d = WAITING_FOR_IN;
                 tmatmul_operation_d = ternip_pkg::NO_TMATMUL_OP;
                 exportvector_counter_d = 0;
@@ -476,7 +462,7 @@ always_comb begin
     end else if ((state_q == WORKING) && (tmatmul_operation_q == ternip_pkg::EXPORT)) begin
 
         // Read chunks from exportvector
-        if (exportvector_counter_q < NumChunksPerVector) begin
+        if (exportvector_counter_q < ternip_types#(Cfg)::NumChunksPerVector) begin
             exportvector_request_valid = 1;
             exportvector_request_write_not_read = 0;
             exportvector_request_addr = exportvector_counter_q;
@@ -491,7 +477,7 @@ always_comb begin
             vector_request_vector_select_o = vector_select_q;
             vector_request_vector_addr_o = exportvector_read_addr;
             vector_request_w_data_o = exportvector_read_data;
-            if (exportvector_read_addr >= NumChunksPerVector-1) begin
+            if (exportvector_read_addr >= ternip_types#(Cfg)::NumChunksPerVector-1) begin
                 state_d = WAITING_FOR_IN;
                 tmatmul_operation_d = ternip_pkg::NO_TMATMUL_OP;
             end

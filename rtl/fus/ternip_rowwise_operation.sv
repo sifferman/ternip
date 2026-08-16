@@ -40,73 +40,58 @@
 // connected to ternip_vector_registers.
 
 module ternip_rowwise_operation #(
-    parameter int D                   = ternip_pkg::D,
-    parameter int FixedPointPrecision = ternip_pkg::FixedPointPrecision,
-    parameter int FixedPointExponent  = ternip_pkg::FixedPointExponent,
-    parameter int VectorParallelism   = ternip_pkg::VectorParallelism,
-    parameter int LutParallelism      = ternip_pkg::LutParallelism,
-    parameter int NumVectorRegisters  = ternip_pkg::NumVectorRegisters,
-    parameter int NumChunksPerVector  = ternip_pkg::NumChunksPerVector,
-    parameter bit UseHardSigmoid      = ternip_pkg::UseHardSigmoid,
-
-    parameter ternip_pkg::mul_impl_e MultiplicationImplementation = ternip_pkg::MultiplicationImplementation,
-    // parameter ternip_pkg::div_impl_e DivisionImplementation       = ternip_pkg::DivisionImplementation,
-
-    localparam type fixed_point_t   = logic signed [ternip_pkg::FixedPointPrecision-1:0],
-    localparam type vector_chunk_t  = fixed_point_t [VectorParallelism-1:0],
-    localparam type vector_offset_t = logic [$clog2(NumChunksPerVector)-1:0],
-    localparam type vector_select_t = logic [$clog2(NumVectorRegisters)-1:0]
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG
 ) (
-    input  logic                    clk_i,
-    input  logic                    rst_ni,
+    input  logic                               clk_i,
+    input  logic                               rst_ni,
 
-    output logic                    in_ready_o,
-    input  logic                    in_valid_i,
-    input  ternip_pkg::rowwise_op_e in_operation_i,
-    input  vector_select_t          in_vector1_r_select_i,
-    input  vector_select_t          in_vector2_r_select_i,
-    input  vector_select_t          in_vector3_r_select_i,
+    output logic                               in_ready_o,
+    input  logic                               in_valid_i,
+    input  ternip_pkg::rowwise_op_e            in_operation_i,
+    input  ternip_types#(Cfg)::vector_select_t in_vector1_r_select_i,
+    input  ternip_types#(Cfg)::vector_select_t in_vector2_r_select_i,
+    input  ternip_types#(Cfg)::vector_select_t in_vector3_r_select_i,
 
-    input  logic           vector_request_ready_i,
-    output logic           vector_request_valid_o,
-    output logic           vector_request_write_not_read_o,
-    output vector_select_t vector_request_vector_select_o,
-    output vector_offset_t vector_request_vector_addr_o,
-    output vector_chunk_t  vector_request_w_data_o,
+    input  logic                               vector_request_ready_i,
+    output logic                               vector_request_valid_o,
+    output logic                               vector_request_write_not_read_o,
+    output ternip_types#(Cfg)::vector_select_t vector_request_vector_select_o,
+    output ternip_types#(Cfg)::vector_offset_t vector_request_vector_addr_o,
+    output ternip_types#(Cfg)::vector_chunk_t  vector_request_w_data_o,
 
-    output logic           vector_read_ready_o,
-    input  logic           vector_read_valid_i,
-    input  vector_chunk_t  vector_read_data_i
+    output logic                               vector_read_ready_o,
+    input  logic                               vector_read_valid_i,
+    input  ternip_types#(Cfg)::vector_chunk_t  vector_read_data_i
 );
 
-logic [$clog2(D+1):0] read_request_counter_d, read_request_counter_q;
-logic [$clog2(D+1):0] read_response_counter_d, read_response_counter_q;
-logic [$clog2(D+1):0] write_request_counter_d, write_request_counter_q;
+logic [$clog2(Cfg.D+1):0] read_request_counter_d, read_request_counter_q;
+logic [$clog2(Cfg.D+1):0] read_response_counter_d, read_response_counter_q;
+logic [$clog2(Cfg.D+1):0] write_request_counter_d, write_request_counter_q;
 ternip_pkg::rowwise_op_e vector_operation_d, vector_operation_q;
 
 wire operation_is_multicycle = vector_operation_q inside {ternip_pkg::MUL, ternip_pkg::DIV, ternip_pkg::SIG, ternip_pkg::CSIG, ternip_pkg::SILU};
 
-vector_select_t vector1_select_d, vector1_select_q;
-vector_select_t vector2_select_d, vector2_select_q;
-vector_select_t vector3_select_d, vector3_select_q;
+ternip_types#(Cfg)::vector_select_t vector1_select_d, vector1_select_q;
+ternip_types#(Cfg)::vector_select_t vector2_select_d, vector2_select_q;
+ternip_types#(Cfg)::vector_select_t vector3_select_d, vector3_select_q;
 
 wire operation_is_multioperand = vector_operation_q inside {ternip_pkg::ADD, ternip_pkg::SUB, ternip_pkg::MUL, ternip_pkg::DIV};
-vector_chunk_t vector1_r_data_d, vector1_r_data_q;
+ternip_types#(Cfg)::vector_chunk_t vector1_r_data_d, vector1_r_data_q;
 
-vector_chunk_t rowwise_add_result;
-vector_chunk_t rowwise_sub_result;
+ternip_types#(Cfg)::vector_chunk_t rowwise_add_result;
+ternip_types#(Cfg)::vector_chunk_t rowwise_sub_result;
 
-logic [VectorParallelism-1:0] rowwise_mul_in_ready;
-logic [VectorParallelism-1:0] rowwise_mul_in_valid;
-logic [VectorParallelism-1:0] rowwise_mul_out_ready;
-logic [VectorParallelism-1:0] rowwise_mul_out_valid;
-vector_chunk_t rowwise_mul_result;
+logic [Cfg.VectorParallelism-1:0] rowwise_mul_in_ready;
+logic [Cfg.VectorParallelism-1:0] rowwise_mul_in_valid;
+logic [Cfg.VectorParallelism-1:0] rowwise_mul_out_ready;
+logic [Cfg.VectorParallelism-1:0] rowwise_mul_out_valid;
+ternip_types#(Cfg)::vector_chunk_t rowwise_mul_result;
 
-logic [VectorParallelism-1:0] rowwise_div_in_ready;
-logic [VectorParallelism-1:0] rowwise_div_in_valid;
-logic [VectorParallelism-1:0] rowwise_div_out_ready;
-logic [VectorParallelism-1:0] rowwise_div_out_valid;
-vector_chunk_t rowwise_div_result;
+logic [Cfg.VectorParallelism-1:0] rowwise_div_in_ready;
+logic [Cfg.VectorParallelism-1:0] rowwise_div_in_valid;
+logic [Cfg.VectorParallelism-1:0] rowwise_div_out_ready;
+logic [Cfg.VectorParallelism-1:0] rowwise_div_out_valid;
+ternip_types#(Cfg)::vector_chunk_t rowwise_div_result;
 
 logic all_mul_in_ready, all_div_in_ready;
 logic all_mul_out_valid, all_div_out_valid;
@@ -119,28 +104,28 @@ logic rowwise_sig_in_ready;
 logic rowwise_sig_in_valid;
 logic rowwise_sig_out_ready;
 logic rowwise_sig_out_valid;
-vector_chunk_t rowwise_sig_result;
+ternip_types#(Cfg)::vector_chunk_t rowwise_sig_result;
 
 logic rowwise_csig_in_ready;
 logic rowwise_csig_in_valid;
 logic rowwise_csig_out_ready;
 logic rowwise_csig_out_valid;
-vector_chunk_t rowwise_csig_result;
-vector_chunk_t rowwise_csig_out_result;
+ternip_types#(Cfg)::vector_chunk_t rowwise_csig_result;
+ternip_types#(Cfg)::vector_chunk_t rowwise_csig_out_result;
 
 logic rowwise_silu_in_ready;
 logic rowwise_silu_in_valid;
 logic rowwise_silu_out_ready;
 logic rowwise_silu_out_valid;
-vector_chunk_t rowwise_silu_result;
-vector_chunk_t rowwise_silu_out_result;
+ternip_types#(Cfg)::vector_chunk_t rowwise_silu_result;
+ternip_types#(Cfg)::vector_chunk_t rowwise_silu_out_result;
 
 logic multicycle_in_ready;
 logic multicycle_in_valid;
 logic multicycle_out_ready;
 logic multicycle_out_valid;
 logic multicycle_result_buffer_valid_d, multicycle_result_buffer_valid_q;
-vector_chunk_t multicycle_result_buffer_d, multicycle_result_buffer_q;
+ternip_types#(Cfg)::vector_chunk_t multicycle_result_buffer_d, multicycle_result_buffer_q;
 
 enum logic [2:0] {
     WAITING_FOR_IN,
@@ -227,11 +212,11 @@ always_comb begin
                     multicycle_result_buffer_d = 'x;
                     multicycle_result_buffer_valid_d = 0;
                     write_request_counter_d++;
-                    if (write_request_counter_q >= NumChunksPerVector-1) begin
+                    if (write_request_counter_q >= ternip_types#(Cfg)::NumChunksPerVector-1) begin
                         state_d = WAITING_FOR_IN;
                     end
                 end
-            end else if (read_request_counter_q < NumChunksPerVector) begin // read request
+            end else if (read_request_counter_q < ternip_types#(Cfg)::NumChunksPerVector) begin // read request
                 // if a read was just received, do not do another read
                 vector_request_valid_o = 1;
                 vector_request_write_not_read_o = 0;
@@ -284,11 +269,11 @@ always_comb begin
                 vector_request_vector_addr_o = write_request_counter_q;
                 if (vector_request_ready_i) begin
                     write_request_counter_d++;
-                    if (write_request_counter_q >= NumChunksPerVector-1) begin
+                    if (write_request_counter_q >= ternip_types#(Cfg)::NumChunksPerVector-1) begin
                         state_d = WAITING_FOR_IN;
                     end
                 end
-            end else if (read_request_counter_q < 2*NumChunksPerVector) begin
+            end else if (read_request_counter_q < 2*ternip_types#(Cfg)::NumChunksPerVector) begin
                 vector_request_valid_o = 1;
                 vector_request_write_not_read_o = 0;
                 if (read_request_counter_q % 2 == 0)
@@ -308,7 +293,7 @@ always_comb begin
                 ternip_pkg::MUL: multicycle_in_ready = all_mul_in_ready;
                 ternip_pkg::DIV: multicycle_in_ready = all_mul_in_ready;
             endcase
-            if (read_response_counter_q < 2*NumChunksPerVector) begin
+            if (read_response_counter_q < 2*ternip_types#(Cfg)::NumChunksPerVector) begin
                 vector_read_ready_o = (read_response_counter_q % 2 == 0) || multicycle_in_ready;
                 if (vector_read_ready_o && vector_read_valid_i) begin
                     read_response_counter_d++;
@@ -320,8 +305,8 @@ always_comb begin
                 end
             end
             case (vector_operation_q)
-                ternip_pkg::MUL: for (int i = 0; i < VectorParallelism; i++) rowwise_mul_in_valid[i] = multicycle_in_valid;
-                ternip_pkg::DIV: for (int i = 0; i < VectorParallelism; i++) rowwise_div_in_valid[i] = multicycle_in_valid;
+                ternip_pkg::MUL: for (int i = 0; i < Cfg.VectorParallelism; i++) rowwise_mul_in_valid[i] = multicycle_in_valid;
+                ternip_pkg::DIV: for (int i = 0; i < Cfg.VectorParallelism; i++) rowwise_div_in_valid[i] = multicycle_in_valid;
             endcase
 
             // buffer -> write request
@@ -334,11 +319,11 @@ always_comb begin
                     multicycle_result_buffer_d = 'x;
                     multicycle_result_buffer_valid_d = 0;
                     write_request_counter_d++;
-                    if (write_request_counter_q >= NumChunksPerVector-1) begin
+                    if (write_request_counter_q >= ternip_types#(Cfg)::NumChunksPerVector-1) begin
                         state_d = WAITING_FOR_IN;
                     end
                 end
-            end else if (read_request_counter_q < 2*NumChunksPerVector) begin // read request
+            end else if (read_request_counter_q < 2*ternip_types#(Cfg)::NumChunksPerVector) begin // read request
                 vector_request_valid_o = 1;
                 vector_request_write_not_read_o = 0;
                 if (read_request_counter_q % 2 == 0) begin // request vec1 read
@@ -355,10 +340,10 @@ always_comb begin
             // multioperand output -> buffer
             multicycle_out_ready = !multicycle_result_buffer_valid_q || vector_request_ready_i;
             if (vector_operation_q == ternip_pkg::MUL) begin
-                for (int i = 0; i < VectorParallelism; i++) rowwise_mul_out_ready[i] = multicycle_out_ready;
+                for (int i = 0; i < Cfg.VectorParallelism; i++) rowwise_mul_out_ready[i] = multicycle_out_ready;
                 multicycle_out_valid = all_mul_out_valid;
             end else if (vector_operation_q == ternip_pkg::DIV) begin
-                for (int i = 0; i < VectorParallelism; i++) rowwise_div_out_ready[i] = multicycle_out_ready;
+                for (int i = 0; i < Cfg.VectorParallelism; i++) rowwise_div_out_ready[i] = multicycle_out_ready;
                 multicycle_out_valid = all_div_out_valid;
             end
 
@@ -413,10 +398,10 @@ always_ff @(posedge clk_i) begin
     `endif
 end
 
-for (genvar i_GEN = 0; i_GEN < VectorParallelism; i_GEN++) begin
+for (genvar i_GEN = 0; i_GEN < Cfg.VectorParallelism; i_GEN++) begin
 
     ternip_add #(
-        .FixedPointPrecision(FixedPointPrecision)
+        .FixedPointPrecision(Cfg.FixedPointPrecision)
     ) add (
         .a_i(vector1_r_data_q[i_GEN]),
         .b_i(vector_read_data_i[i_GEN]),
@@ -424,7 +409,7 @@ for (genvar i_GEN = 0; i_GEN < VectorParallelism; i_GEN++) begin
     );
 
     ternip_sub #(
-        .FixedPointPrecision(FixedPointPrecision)
+        .FixedPointPrecision(Cfg.FixedPointPrecision)
     ) sub (
         .a_i(vector1_r_data_q[i_GEN]),
         .b_i(vector_read_data_i[i_GEN]),
@@ -432,13 +417,13 @@ for (genvar i_GEN = 0; i_GEN < VectorParallelism; i_GEN++) begin
     );
 
     ternip_mul #(
-        .InAPrecision(FixedPointPrecision),
-        .InAExponent(FixedPointExponent),
-        .InBPrecision(FixedPointPrecision),
-        .InBExponent(FixedPointExponent),
-        .OutPrecision(FixedPointPrecision),
-        .OutExponent(FixedPointExponent),
-        .Implementation(MultiplicationImplementation)
+        .InAPrecision(Cfg.FixedPointPrecision),
+        .InAExponent(Cfg.FixedPointExponent),
+        .InBPrecision(Cfg.FixedPointPrecision),
+        .InBExponent(Cfg.FixedPointExponent),
+        .OutPrecision(Cfg.FixedPointPrecision),
+        .OutExponent(Cfg.FixedPointExponent),
+        .Implementation(Cfg.MultiplicationImplementation)
     ) mul (
         .clk_i,
         .rst_ni,
@@ -453,12 +438,12 @@ for (genvar i_GEN = 0; i_GEN < VectorParallelism; i_GEN++) begin
     );
 
     ternip_div #(
-        .InAPrecision(FixedPointPrecision),
-        .InAExponent(FixedPointExponent),
-        .InBPrecision(FixedPointPrecision),
-        .InBExponent(FixedPointExponent),
-        .OutPrecision(FixedPointPrecision),
-        .OutExponent(FixedPointExponent),
+        .InAPrecision(Cfg.FixedPointPrecision),
+        .InAExponent(Cfg.FixedPointExponent),
+        .InBPrecision(Cfg.FixedPointPrecision),
+        .InBExponent(Cfg.FixedPointExponent),
+        .OutPrecision(Cfg.FixedPointPrecision),
+        .OutExponent(Cfg.FixedPointExponent),
         .Implementation(ternip_pkg::DIV_NONE) // Disable division unit
     ) div (
         .clk_i,
@@ -476,11 +461,11 @@ for (genvar i_GEN = 0; i_GEN < VectorParallelism; i_GEN++) begin
 end
 
 ternip_sig_parallelized #(
-    .FixedPointPrecision(FixedPointPrecision),
-    .FixedPointExponent(FixedPointExponent),
-    .VectorParallelism(VectorParallelism),
-    .LutParallelism(LutParallelism),
-    .UseHardSigmoid(UseHardSigmoid)
+    .FixedPointPrecision(Cfg.FixedPointPrecision),
+    .FixedPointExponent(Cfg.FixedPointExponent),
+    .VectorParallelism(Cfg.VectorParallelism),
+    .LutParallelism(Cfg.LutParallelism),
+    .UseHardSigmoid(Cfg.UseHardSigmoid)
 ) sig_parallelized (
     .clk_i,
     .rst_ni,
@@ -495,11 +480,11 @@ ternip_sig_parallelized #(
 );
 
 ternip_csig_parallelized #(
-    .FixedPointPrecision(FixedPointPrecision),
-    .FixedPointExponent(FixedPointExponent),
-    .VectorParallelism(VectorParallelism),
-    .LutParallelism(LutParallelism),
-    .UseHardSigmoid(UseHardSigmoid)
+    .FixedPointPrecision(Cfg.FixedPointPrecision),
+    .FixedPointExponent(Cfg.FixedPointExponent),
+    .VectorParallelism(Cfg.VectorParallelism),
+    .LutParallelism(Cfg.LutParallelism),
+    .UseHardSigmoid(Cfg.UseHardSigmoid)
 ) csig_parallelized (
     .clk_i,
     .rst_ni,
@@ -514,11 +499,11 @@ ternip_csig_parallelized #(
 );
 
 ternip_silu_parallelized #(
-    .FixedPointPrecision(FixedPointPrecision),
-    .FixedPointExponent(FixedPointExponent),
-    .VectorParallelism(VectorParallelism),
-    .LutParallelism(LutParallelism),
-    .UseHardSigmoid(UseHardSigmoid)
+    .FixedPointPrecision(Cfg.FixedPointPrecision),
+    .FixedPointExponent(Cfg.FixedPointExponent),
+    .VectorParallelism(Cfg.VectorParallelism),
+    .LutParallelism(Cfg.LutParallelism),
+    .UseHardSigmoid(Cfg.UseHardSigmoid)
 ) silu_parallelized (
     .clk_i,
     .rst_ni,

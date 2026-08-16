@@ -40,95 +40,58 @@
 // interrupts.
 
 module ternip_core #(
-    parameter int D                           = ternip_pkg::D,
-    parameter int TmatmulParallelism          = ternip_pkg::TmatmulParallelism,
-    parameter int FixedPointPrecision         = ternip_pkg::FixedPointPrecision,
-    parameter int FixedPointExponent          = ternip_pkg::FixedPointExponent,
-    parameter int VectorParallelism           = ternip_pkg::VectorParallelism,
-    parameter int LutParallelism              = ternip_pkg::LutParallelism,
-    parameter int NumVectorRegisters          = ternip_pkg::NumVectorRegisters,
-    parameter int NumChunksPerVector          = ternip_pkg::NumChunksPerVector,
-    parameter int ImmediateWidth              = ternip_pkg::ImmediateWidth,
-    parameter int DdrAddressWidth             = ternip_pkg::DdrAddressWidth,
-    parameter int BatchSize                   = ternip_pkg::BatchSize,
-    parameter bit UseHardSigmoid              = ternip_pkg::UseHardSigmoid,
-    parameter int RmsSqaSumPrecision          = ternip_pkg::RmsSqaSumPrecision,
-    parameter int RmsSqaSumExponent           = ternip_pkg::RmsSqaSumExponent,
-    parameter int RmsValueReciprocalPrecision = ternip_pkg::RmsValueReciprocalPrecision,
-    parameter int RmsValueReciprocalExponent  = ternip_pkg::RmsValueReciprocalExponent,
-    parameter int RmsSqrtInputPrecision       = ternip_pkg::RmsSqrtInputPrecision,
-    parameter int RmsSqrtInputExponent        = ternip_pkg::RmsSqrtInputExponent,
-    parameter int RmsAccumulatorWidth         = ternip_pkg::RmsAccumulatorWidth,
-    parameter int MatrixSizeInBytes           = ternip_pkg::MatrixSizeInBytes,
-
-    parameter ternip_pkg::mul_impl_e MultiplicationImplementation = ternip_pkg::MultiplicationImplementation,
-    parameter ternip_pkg::div_impl_e DivisionImplementation       = ternip_pkg::DivisionImplementation,
-
-    parameter type instruction_t       = ternip_pkg::instruction_t,
-
-    localparam type fixed_point_t         = logic signed [ternip_pkg::FixedPointPrecision-1:0],
-    localparam type vector_chunk_t        = fixed_point_t [VectorParallelism-1:0],
-    localparam type ternary_t             = logic signed [1:0],
-    localparam type tmatmul_stream_data_t = ternary_t [TmatmulParallelism-1:0],
-    localparam type vector_offset_t       = logic [$clog2(NumChunksPerVector)-1:0],
-    localparam type vector_select_t       = logic [$clog2(NumVectorRegisters)-1:0],
-    localparam type immediate_t           = logic [ImmediateWidth-1:0],
-    localparam type ddr_address_t         = logic [DdrAddressWidth-1:0]
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG
 ) (
-    input  logic                 clk_i,
-    input  logic                 rst_ni,
+    input  logic                                     clk_i,
+    input  logic                                     rst_ni,
 
-    output logic                 instruction_ready_o,
-    input  logic                 instruction_valid_i,
-    input  instruction_t         instruction_i,
+    output logic                                     instruction_ready_o,
+    input  logic                                     instruction_valid_i,
+    input  ternip_types#(Cfg)::instruction_t         instruction_i,
 
-    input  logic                 loadstore_ddr_stream_ready_i,
-    output logic                 loadstore_ddr_stream_valid_o,
-    output ddr_address_t         loadstore_ddr_stream_address_o,
-    output logic                 loadstore_ddr_stream_write_not_read_o,
-    output logic [31:0]          loadstore_ddr_stream_length_o,
+    input  logic                                     loadstore_ddr_stream_ready_i,
+    output logic                                     loadstore_ddr_stream_valid_o,
+    output ternip_types#(Cfg)::ddr_address_t         loadstore_ddr_stream_address_o,
+    output logic                                     loadstore_ddr_stream_write_not_read_o,
+    output logic [31:0]                              loadstore_ddr_stream_length_o,
 
-    output logic                 loadstore_ddr_r_ready_o,
-    input  logic                 loadstore_ddr_r_valid_i,
-    input  vector_chunk_t        loadstore_ddr_r_data_i,
+    output logic                                     loadstore_ddr_r_ready_o,
+    input  logic                                     loadstore_ddr_r_valid_i,
+    input  ternip_types#(Cfg)::vector_chunk_t        loadstore_ddr_r_data_i,
 
-    input  logic                 loadstore_ddr_w_ready_i,
-    output logic                 loadstore_ddr_w_valid_o,
-    output vector_chunk_t        loadstore_ddr_w_data_o,
+    input  logic                                     loadstore_ddr_w_ready_i,
+    output logic                                     loadstore_ddr_w_valid_o,
+    output ternip_types#(Cfg)::vector_chunk_t        loadstore_ddr_w_data_o,
 
-    output logic [63:0]          loadstore_ddr_debug_o,
+    output logic [63:0]                              loadstore_ddr_debug_o,
 
-    input  logic                 tmatmul_ddr_stream_ready_i,
-    output logic                 tmatmul_ddr_stream_valid_o,
-    output ddr_address_t         tmatmul_ddr_stream_address_o,
-    output logic [31:0]          tmatmul_ddr_stream_length_o,
+    input  logic                                     tmatmul_ddr_stream_ready_i,
+    output logic                                     tmatmul_ddr_stream_valid_o,
+    output ternip_types#(Cfg)::ddr_address_t         tmatmul_ddr_stream_address_o,
+    output logic [31:0]                              tmatmul_ddr_stream_length_o,
 
-    output logic                 tmatmul_ddr_r_ready_o,
-    input  logic                 tmatmul_ddr_r_valid_i,
-    input  tmatmul_stream_data_t tmatmul_ddr_r_data_i,
+    output logic                                     tmatmul_ddr_r_ready_o,
+    input  logic                                     tmatmul_ddr_r_valid_i,
+    input  ternip_types#(Cfg)::tmatmul_stream_data_t tmatmul_ddr_r_data_i,
 
-    output logic                 stall_active_o,
-    input  logic                 stall_clear_i
+    output logic                                     stall_active_o,
+    input  logic                                     stall_clear_i
 );
 
-logic           vector_request_ready;
-logic           vector_request_valid;
-logic           vector_request_write_not_read;
-vector_select_t vector_request_vector_select;
-vector_offset_t vector_request_vector_addr;
-vector_chunk_t  vector_request_w_data;
+logic                               vector_request_ready;
+logic                               vector_request_valid;
+logic                               vector_request_write_not_read;
+ternip_types#(Cfg)::vector_select_t vector_request_vector_select;
+ternip_types#(Cfg)::vector_offset_t vector_request_vector_addr;
+ternip_types#(Cfg)::vector_chunk_t  vector_request_w_data;
 
-logic           vector_read_ready;
-logic           vector_read_valid;
-vector_offset_t vector_read_addr;
-vector_chunk_t  vector_read_data;
+logic                               vector_read_ready;
+logic                               vector_read_valid;
+ternip_types#(Cfg)::vector_offset_t vector_read_addr;
+ternip_types#(Cfg)::vector_chunk_t  vector_read_data;
 
 ternip_vector_registers #(
-    .D(D),
-    .FixedPointPrecision(FixedPointPrecision),
-    .VectorParallelism(VectorParallelism),
-    .NumVectorRegisters(NumVectorRegisters),
-    .NumChunksPerVector(NumChunksPerVector)
+    .Cfg(Cfg)
 ) vector_registers (
     .clk_i,
     .rst_ni,
@@ -147,28 +110,22 @@ ternip_vector_registers #(
     .read_data_o(vector_read_data)
 );
 
-logic                      loadstore_in_ready;
-logic                      loadstore_in_valid;
-ternip_pkg::loadstore_op_e loadstore_in_vector_operation;
-ddr_address_t              loadstore_in_vector_memory_address;
-vector_select_t            loadstore_in_vector_select;
+logic                               loadstore_in_ready;
+logic                               loadstore_in_valid;
+ternip_pkg::loadstore_op_e          loadstore_in_vector_operation;
+ternip_types#(Cfg)::ddr_address_t   loadstore_in_vector_memory_address;
+ternip_types#(Cfg)::vector_select_t loadstore_in_vector_select;
 
-logic                      loadstore_vector_request_valid;
-logic                      loadstore_vector_request_write_not_read;
-vector_select_t            loadstore_vector_request_vector_select;
-vector_offset_t            loadstore_vector_request_vector_addr;
-vector_chunk_t             loadstore_vector_request_w_data;
+logic                               loadstore_vector_request_valid;
+logic                               loadstore_vector_request_write_not_read;
+ternip_types#(Cfg)::vector_select_t loadstore_vector_request_vector_select;
+ternip_types#(Cfg)::vector_offset_t loadstore_vector_request_vector_addr;
+ternip_types#(Cfg)::vector_chunk_t  loadstore_vector_request_w_data;
 
-logic                      loadstore_vector_read_ready;
+logic loadstore_vector_read_ready;
 
 ternip_loadstore #(
-    .D(D),
-    .FixedPointPrecision(FixedPointPrecision),
-    .VectorParallelism(VectorParallelism),
-    .NumVectorRegisters(NumVectorRegisters),
-    .NumChunksPerVector(NumChunksPerVector),
-    .DdrAddressWidth(DdrAddressWidth),
-    .BatchSize(BatchSize)
+    .Cfg(Cfg)
 ) loadstore (
     .clk_i,
     .rst_ni,
@@ -212,28 +169,20 @@ logic                    rowwise_operation_in_ready;
 logic                    rowwise_operation_in_valid;
 ternip_pkg::rowwise_op_e rowwise_operation_in_operation;
 
-vector_select_t          rowwise_operation_in_vector1_r_select;
-vector_select_t          rowwise_operation_in_vector2_r_select;
-vector_select_t          rowwise_operation_in_vector3_r_select;
+ternip_types#(Cfg)::vector_select_t rowwise_operation_in_vector1_r_select;
+ternip_types#(Cfg)::vector_select_t rowwise_operation_in_vector2_r_select;
+ternip_types#(Cfg)::vector_select_t rowwise_operation_in_vector3_r_select;
 
-logic                    rowwise_operation_vector_request_valid;
-logic                    rowwise_operation_vector_request_write_not_read;
-vector_select_t          rowwise_operation_vector_request_vector_select;
-vector_offset_t          rowwise_operation_vector_request_vector_addr;
-vector_chunk_t           rowwise_operation_vector_request_w_data;
+logic                               rowwise_operation_vector_request_valid;
+logic                               rowwise_operation_vector_request_write_not_read;
+ternip_types#(Cfg)::vector_select_t rowwise_operation_vector_request_vector_select;
+ternip_types#(Cfg)::vector_offset_t rowwise_operation_vector_request_vector_addr;
+ternip_types#(Cfg)::vector_chunk_t  rowwise_operation_vector_request_w_data;
 
-logic                    rowwise_operation_vector_read_ready;
+logic rowwise_operation_vector_read_ready;
 
 ternip_rowwise_operation #(
-    .D(D),
-    .FixedPointPrecision(FixedPointPrecision),
-    .FixedPointExponent(FixedPointExponent),
-    .VectorParallelism(VectorParallelism),
-    .LutParallelism(LutParallelism),
-    .NumVectorRegisters(NumVectorRegisters),
-    .NumChunksPerVector(NumChunksPerVector),
-    .UseHardSigmoid(UseHardSigmoid),
-    .MultiplicationImplementation(MultiplicationImplementation)
+    .Cfg(Cfg)
 ) rowwise_operation (
     .clk_i,
     .rst_ni,
@@ -258,36 +207,23 @@ ternip_rowwise_operation #(
     .vector_read_data_i(vector_read_data)
 );
 
-logic                rms_in_ready;
-logic                rms_in_valid;
-ternip_pkg::rms_op_e rms_in_op;
-vector_select_t      rms_in_vector1_select;
-vector_select_t      rms_in_vector2_select;
-immediate_t          rms_in_length;
+logic                               rms_in_ready;
+logic                               rms_in_valid;
+ternip_pkg::rms_op_e                rms_in_op;
+ternip_types#(Cfg)::vector_select_t rms_in_vector1_select;
+ternip_types#(Cfg)::vector_select_t rms_in_vector2_select;
+ternip_types#(Cfg)::immediate_t     rms_in_length;
 
-logic                rms_vector_request_valid;
-logic                rms_vector_request_write_not_read;
-vector_select_t      rms_vector_request_vector_select;
-vector_offset_t      rms_vector_request_vector_addr;
-vector_chunk_t       rms_vector_request_w_data;
+logic                               rms_vector_request_valid;
+logic                               rms_vector_request_write_not_read;
+ternip_types#(Cfg)::vector_select_t rms_vector_request_vector_select;
+ternip_types#(Cfg)::vector_offset_t rms_vector_request_vector_addr;
+ternip_types#(Cfg)::vector_chunk_t  rms_vector_request_w_data;
 
-logic                rms_vector_read_ready;
+logic rms_vector_read_ready;
 
 ternip_rms #(
-    .FixedPointPrecision(FixedPointPrecision),
-    .FixedPointExponent(FixedPointExponent),
-    .VectorParallelism(VectorParallelism),
-    .NumVectorRegisters(NumVectorRegisters),
-    .NumChunksPerVector(NumChunksPerVector),
-    .ImmediateWidth(ImmediateWidth),
-    .RmsSqaSumPrecision(RmsSqaSumPrecision),
-    .RmsSqaSumExponent(RmsSqaSumExponent),
-    .RmsValueReciprocalPrecision(RmsValueReciprocalPrecision),
-    .RmsValueReciprocalExponent(RmsValueReciprocalExponent),
-    .RmsSqrtInputPrecision(RmsSqrtInputPrecision),
-    .RmsSqrtInputExponent(RmsSqrtInputExponent),
-    .RmsAccumulatorWidth(RmsAccumulatorWidth),
-    .DivisionImplementation(DivisionImplementation)
+    .Cfg(Cfg)
 ) rms (
     .clk_i,
     .rst_ni,
@@ -317,30 +253,23 @@ ternip_rms #(
     .rms_value_reciprocal_valid_o()
 );
 
-logic                    tmatmul_in_ready;
-logic                    tmatmul_in_valid;
-vector_select_t          tmatmul_in_vector_select;
-ddr_address_t            tmatmul_in_go_matrix_address;
+logic                               tmatmul_in_ready;
+logic                               tmatmul_in_valid;
+ternip_types#(Cfg)::vector_select_t tmatmul_in_vector_select;
+ternip_types#(Cfg)::ddr_address_t   tmatmul_in_go_matrix_address;
 
 ternip_pkg::tmatmul_op_e tmatmul_in_operation;
 
-logic                    tmatmul_vector_request_valid;
-logic                    tmatmul_vector_request_write_not_read;
-vector_select_t          tmatmul_vector_request_vector_select;
-vector_offset_t          tmatmul_vector_request_vector_addr;
-vector_chunk_t           tmatmul_vector_request_w_data;
+logic                               tmatmul_vector_request_valid;
+logic                               tmatmul_vector_request_write_not_read;
+ternip_types#(Cfg)::vector_select_t tmatmul_vector_request_vector_select;
+ternip_types#(Cfg)::vector_offset_t tmatmul_vector_request_vector_addr;
+ternip_types#(Cfg)::vector_chunk_t  tmatmul_vector_request_w_data;
 
-logic                    tmatmul_vector_read_ready;
+logic tmatmul_vector_read_ready;
 
 ternip_tmatmul #(
-    .D(D),
-    .TmatmulParallelism(TmatmulParallelism),
-    .FixedPointPrecision(FixedPointPrecision),
-    .VectorParallelism(VectorParallelism),
-    .NumVectorRegisters(NumVectorRegisters),
-    .NumChunksPerVector(NumChunksPerVector),
-    .DdrAddressWidth(DdrAddressWidth),
-    .MatrixSizeInBytes(MatrixSizeInBytes)
+    .Cfg(Cfg)
 ) tmatmul (
     .clk_i,
     .rst_ni,

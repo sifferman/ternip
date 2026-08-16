@@ -37,67 +37,55 @@
 //
 // Use in_vector_memory_address_i as the stream base address and
 // in_vector_select_i as the target/source vector register. The emitted stream
-// length is BatchSize * VectorSizeInBytes.
+// length is Cfg.BatchSize * VectorSizeInBytes.
 
 module ternip_loadstore #(
-    parameter int D                   = ternip_pkg::D,
-    parameter int FixedPointPrecision = ternip_pkg::FixedPointPrecision,
-    parameter int VectorParallelism   = ternip_pkg::VectorParallelism,
-    parameter int NumVectorRegisters  = ternip_pkg::NumVectorRegisters,
-    parameter int NumChunksPerVector  = ternip_pkg::NumChunksPerVector,
-    parameter int DdrAddressWidth     = ternip_pkg::DdrAddressWidth,
-    parameter int BatchSize           = ternip_pkg::BatchSize,
-
-    localparam type fixed_point_t     = logic signed [ternip_pkg::FixedPointPrecision-1:0],
-    localparam type vector_chunk_t    = fixed_point_t [VectorParallelism-1:0],
-    localparam type vector_offset_t   = logic [$clog2(NumChunksPerVector)-1:0],
-    localparam type vector_select_t   = logic [$clog2(NumVectorRegisters)-1:0],
-    localparam type ddr_address_t     = logic [DdrAddressWidth-1:0]
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG
 ) (
-    input  logic                      clk_i,
-    input  logic                      rst_ni,
+    input  logic                               clk_i,
+    input  logic                               rst_ni,
 
-    output logic                      in_ready_o,
-    input  logic                      in_valid_i,
-    input  ternip_pkg::loadstore_op_e in_vector_operation_i,
-    input  ddr_address_t              in_vector_memory_address_i,
-    input  vector_select_t            in_vector_select_i,
+    output logic                               in_ready_o,
+    input  logic                               in_valid_i,
+    input  ternip_pkg::loadstore_op_e          in_vector_operation_i,
+    input  ternip_types#(Cfg)::ddr_address_t   in_vector_memory_address_i,
+    input  ternip_types#(Cfg)::vector_select_t in_vector_select_i,
 
     // vector request interface
-    input  logic                  vector_request_ready_i,
-    output logic                  vector_request_valid_o,
-    output logic                  vector_request_write_not_read_o,
-    output vector_select_t        vector_request_vector_select_o,
-    output vector_offset_t        vector_request_vector_addr_o,
-    output vector_chunk_t         vector_request_w_data_o,
+    input  logic                               vector_request_ready_i,
+    output logic                               vector_request_valid_o,
+    output logic                               vector_request_write_not_read_o,
+    output ternip_types#(Cfg)::vector_select_t vector_request_vector_select_o,
+    output ternip_types#(Cfg)::vector_offset_t vector_request_vector_addr_o,
+    output ternip_types#(Cfg)::vector_chunk_t  vector_request_w_data_o,
 
     // vector read interface
-    output logic                  vector_read_ready_o,
-    input  logic                  vector_read_valid_i,
-    input  vector_offset_t        vector_read_addr_i,
-    input  vector_chunk_t         vector_read_data_i,
+    output logic                               vector_read_ready_o,
+    input  logic                               vector_read_valid_i,
+    input  ternip_types#(Cfg)::vector_offset_t vector_read_addr_i,
+    input  ternip_types#(Cfg)::vector_chunk_t  vector_read_data_i,
 
     // ddr stream start config
-    input  logic                  ddr_stream_ready_i,
-    output logic                  ddr_stream_valid_o,
-    output ddr_address_t          ddr_stream_address_o,
-    output logic                  ddr_stream_write_not_read_o,
-    output logic [31:0]           ddr_stream_length_o,
+    input  logic                               ddr_stream_ready_i,
+    output logic                               ddr_stream_valid_o,
+    output ternip_types#(Cfg)::ddr_address_t   ddr_stream_address_o,
+    output logic                               ddr_stream_write_not_read_o,
+    output logic [31:0]                        ddr_stream_length_o,
 
     // read data is streamed in sequentially
-    output logic                  ddr_r_ready_o,
-    input  logic                  ddr_r_valid_i,
-    input  vector_chunk_t         ddr_r_data_i,
+    output logic                               ddr_r_ready_o,
+    input  logic                               ddr_r_valid_i,
+    input  ternip_types#(Cfg)::vector_chunk_t  ddr_r_data_i,
 
     // write data should be streamed out sequentially
-    input  logic                  ddr_w_ready_i,
-    output logic                  ddr_w_valid_o,
-    output vector_chunk_t         ddr_w_data_o,
+    input  logic                               ddr_w_ready_i,
+    output logic                               ddr_w_valid_o,
+    output ternip_types#(Cfg)::vector_chunk_t  ddr_w_data_o,
 
-    output logic [63:0]           debug_o
+    output logic [63:0]                        debug_o
 );
 
-localparam int VectorSizeInBytes = D * FixedPointPrecision / 8;
+localparam int VectorSizeInBytes = Cfg.D * Cfg.FixedPointPrecision / 8;
 
 enum logic [1:0] {
     WAITING_FOR_IN,
@@ -105,10 +93,10 @@ enum logic [1:0] {
     WORKING
 } state_d, state_q = WAITING_FOR_IN; // for assertions at time=0
 
-logic [$clog2(D):0] vector_counter_d, vector_counter_q;
+logic [$clog2(Cfg.D):0] vector_counter_d, vector_counter_q;
 ternip_pkg::loadstore_op_e vector_operation_d, vector_operation_q;
-vector_select_t vector_select_d, vector_select_q;
-ddr_address_t vector_memory_address_d, vector_memory_address_q;
+ternip_types#(Cfg)::vector_select_t vector_select_d, vector_select_q;
+ternip_types#(Cfg)::ddr_address_t vector_memory_address_d, vector_memory_address_q;
 
 always_ff @(posedge clk_i) begin
     debug_o[0+:4] <= state_q;
@@ -130,7 +118,7 @@ always_ff @(posedge clk_i) begin
 end
 
 assign vector_request_vector_select_o = vector_select_q;
-assign ddr_stream_length_o = BatchSize * VectorSizeInBytes;
+assign ddr_stream_length_o = Cfg.BatchSize * VectorSizeInBytes;
 
 always_comb begin
     state_d = state_q;
@@ -179,13 +167,13 @@ always_comb begin
             vector_request_vector_addr_o = vector_counter_q;
             vector_request_w_data_o = ddr_r_data_i;
             vector_counter_d++;
-            if (vector_counter_q == NumChunksPerVector-1) begin
+            if (vector_counter_q == ternip_types#(Cfg)::NumChunksPerVector-1) begin
                 state_d = WAITING_FOR_IN;
             end
         end
     end else if ((state_q == WORKING)&&(vector_operation_q == ternip_pkg::SV)) begin
         // read from vector
-        if (vector_counter_q != NumChunksPerVector) begin
+        if (vector_counter_q != ternip_types#(Cfg)::NumChunksPerVector) begin
             vector_request_valid_o = 1;
             vector_request_write_not_read_o = 0;
             vector_request_vector_addr_o = vector_counter_q;
@@ -196,7 +184,7 @@ always_comb begin
         ddr_w_valid_o = vector_read_valid_i;
         ddr_w_data_o = vector_read_data_i;
         if (ddr_w_ready_i && ddr_w_valid_o) begin
-            if (vector_read_addr_i == NumChunksPerVector-1) state_d = WAITING_FOR_IN;
+            if (vector_read_addr_i == ternip_types#(Cfg)::NumChunksPerVector-1) state_d = WAITING_FOR_IN;
         end
     end
 end

@@ -28,7 +28,7 @@
 //
 // Stores Ternip vector registers.
 //
-// Each vector is stored as NumChunksPerVector chunks. A request chooses one
+// Each vector is stored as ternip_types#(Cfg)::NumChunksPerVector chunks. A request chooses one
 // vector register and one chunk address, then either writes that chunk or starts
 // a read for that chunk.
 //
@@ -37,43 +37,34 @@
 // that were read.
 
 module ternip_vector_registers #(
-    parameter int D                   = ternip_pkg::D,
-    parameter int FixedPointPrecision = ternip_pkg::FixedPointPrecision,
-    parameter int VectorParallelism   = ternip_pkg::VectorParallelism,
-    parameter int NumVectorRegisters  = ternip_pkg::NumVectorRegisters,
-    parameter int NumChunksPerVector  = ternip_pkg::NumChunksPerVector,
-
-    localparam type fixed_point_t     = logic signed [ternip_pkg::FixedPointPrecision-1:0],
-    localparam type vector_chunk_t    = fixed_point_t [VectorParallelism-1:0],
-    localparam type vector_offset_t   = logic [$clog2(NumChunksPerVector)-1:0],
-    localparam type vector_select_t   = logic [$clog2(NumVectorRegisters)-1:0]
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG
 ) (
-    input  logic           clk_i,
-    input  logic           rst_ni,
+    input  logic                               clk_i,
+    input  logic                               rst_ni,
 
-    output logic           request_ready_o,
-    input  logic           request_valid_i,
-    input  logic           request_write_not_read_i,
-    input  vector_select_t request_vector_select_i,
-    input  vector_offset_t request_vector_addr_i,
-    input  vector_chunk_t  request_w_data_i,
+    output logic                               request_ready_o,
+    input  logic                               request_valid_i,
+    input  logic                               request_write_not_read_i,
+    input  ternip_types#(Cfg)::vector_select_t request_vector_select_i,
+    input  ternip_types#(Cfg)::vector_offset_t request_vector_addr_i,
+    input  ternip_types#(Cfg)::vector_chunk_t  request_w_data_i,
 
-    input  logic           read_ready_i,
-    output logic           read_valid_o,
-    output vector_select_t read_vector_select_o,
-    output vector_offset_t read_addr_o,
-    output vector_chunk_t  read_data_o
+    input  logic                               read_ready_i,
+    output logic                               read_valid_o,
+    output ternip_types#(Cfg)::vector_select_t read_vector_select_o,
+    output ternip_types#(Cfg)::vector_offset_t read_addr_o,
+    output ternip_types#(Cfg)::vector_chunk_t  read_data_o
 );
 
-logic [$bits(vector_select_t)+$bits(vector_offset_t)-1:0] request_mem_addr, read_mem_addr;
+logic [$bits(ternip_types#(Cfg)::vector_select_t)+$bits(ternip_types#(Cfg)::vector_offset_t)-1:0] request_mem_addr, read_mem_addr;
 assign request_mem_addr = {request_vector_select_i, request_vector_addr_i};
 assign {read_vector_select_o, read_addr_o} = read_mem_addr;
 
-localparam int D_rounded_up = 2**$clog2(D);
+localparam int D_rounded_up = 2**$clog2(Cfg.D);
 
 ternip_pipelined_mem #(
-    .DATA_WIDTH(FixedPointPrecision * VectorParallelism),
-    .NUM_ENTRIES(NumVectorRegisters * D_rounded_up / VectorParallelism),
+    .DATA_WIDTH(Cfg.FixedPointPrecision * Cfg.VectorParallelism),
+    .NUM_ENTRIES(Cfg.NumVectorRegisters * D_rounded_up / Cfg.VectorParallelism),
     .DECOUPLED_READY(1)
 ) pipelined_mem (
     .clk_i,

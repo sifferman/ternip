@@ -33,14 +33,16 @@
 // LUT mode processes LutParallelism lanes at a time.
 
 module ternip_silu_parallelized #(
-    parameter int  FixedPointPrecision          = ternip_pkg::FixedPointPrecision,
-    parameter int  FixedPointExponent           = ternip_pkg::FixedPointExponent,
-    parameter int  VectorParallelism            = ternip_pkg::VectorParallelism,
-    parameter int  LutParallelism               = ternip_pkg::LutParallelism,
-    parameter bit  UseHardSigmoid               = ternip_pkg::UseHardSigmoid,
-    parameter ternip_pkg::mul_impl_e MultiplicationImplementation = ternip_pkg::MultiplicationImplementation,
+    parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG,
 
-    localparam type fixed_point_t = logic signed [ternip_pkg::FixedPointPrecision-1:0],
+    parameter int  FixedPointPrecision          = Cfg.FixedPointPrecision,
+    parameter int  FixedPointExponent           = Cfg.FixedPointExponent,
+    parameter int  VectorParallelism            = Cfg.VectorParallelism,
+    parameter int  LutParallelism               = Cfg.LutParallelism,
+    parameter bit  UseHardSigmoid               = Cfg.UseHardSigmoid,
+    parameter ternip_pkg::mul_impl_e MultiplicationImplementation = Cfg.MultiplicationImplementation,
+
+    localparam type fixed_point_t = logic signed [FixedPointPrecision-1:0],
     localparam type vector_chunk_t = fixed_point_t [VectorParallelism-1:0]
 ) (
     input  logic          clk_i,

@@ -16,10 +16,15 @@ This project is licensed under the [BSD 3-Clause License](LICENSE) and is free t
 
 | File | Description |
 |------|-------------|
+| [rtl/ternip_pkg.sv](rtl/ternip_pkg.sv) | Base configuration struct (`ternip_cfg_t`) |
+| [rtl/ternip_types.sv](rtl/ternip_types.sv) | Config-derived values and data types (`ternip_types#(Cfg)`) |
 | [rtl/ternip/ternip_core.sv](rtl/ternip/ternip_core.sv) | Top-level compute core |
 | [rtl/fus/ternip_tmatmul.sv](rtl/fus/ternip_tmatmul.sv) | Ternary matrix multiplication unit |
 | [rtl/fus/ternip_rms.sv](rtl/fus/ternip_rms.sv) | RMS normalization unit |
 | [rtl/math/](rtl/math/) | Math modules (sqrt, sigmoid, SiLU, and more) |
+
+Configuration is passed as a threaded `ternip_pkg::ternip_cfg_t` struct
+parameter (`Cfg`) rather than a global config file.
 
 *Tests and build flow are not currently provided but will be made available shortly.*
 

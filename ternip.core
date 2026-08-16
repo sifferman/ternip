@@ -12,7 +12,9 @@ provider:
 filesets:
   rtl:
     files:
+      - rtl/ternip_config_pkg.sv
       - rtl/ternip_pkg.sv
+      - rtl/ternip_types.sv
       - rtl/ternip_readmem_path.svh : {is_include_file : true}
       - rtl/ternip_vector_registers.sv
       - rtl/common/ternip_gearbox_fifo.sv
