@@ -130,38 +130,74 @@ ternip_fixed_point_convert #(
 localparam int RawDivideLatencyUpperBound = DivInternalPrecision + 16;
 localparam int EqualizerCounterWidth = $clog2(RawDivideLatencyUpperBound + 1);
 
-// counter == 0 is idle; a divide counts to RawDivideLatencyUpperBound, then signals done.
-logic [EqualizerCounterWidth-1:0] equalizer_counter_d, equalizer_counter_q;
-wire equalizer_idle = (equalizer_counter_q == '0);
-wire equalizer_done = (equalizer_counter_q >= EqualizerCounterWidth'(RawDivideLatencyUpperBound));
+// The quotient is captured into equalizer_result_q as soon as the raw divider
+// presents it, and held until the window elapses. Registering it here (rather
+// than driving y_o straight from convert_out_y) also breaks the combinational
+// path from the divider's held quotient through the output requantize into the
+// consumer's own input conversion, which is the critical path out of rms.
+logic                              equalizer_busy_d, equalizer_busy_q;
+logic                              equalizer_captured_d, equalizer_captured_q;
+logic [EqualizerCounterWidth-1:0]  equalizer_counter_d, equalizer_counter_q;
+logic signed [OutPrecision-1:0]    equalizer_result_d, equalizer_result_q;
 
-assign raw_in_valid  = in_valid_i && equalizer_idle;
-assign in_ready_o    = raw_in_ready && equalizer_idle;
-assign div_out_ready = equalizer_done && out_ready_i;
-assign out_valid_o   = equalizer_done;
-assign y_o           = convert_out_y;
+wire equalizer_accept = in_valid_i && in_ready_o;
+wire equalizer_capture = equalizer_busy_q && div_out_valid && !equalizer_captured_q;
+wire equalizer_result_present
+    = equalizer_busy_q
+      && (equalizer_counter_q >= EqualizerCounterWidth'(RawDivideLatencyUpperBound));
+
+assign raw_in_valid = in_valid_i && !equalizer_busy_q;
+assign in_ready_o   = raw_in_ready && !equalizer_busy_q;
+// Drain the raw divider exactly once, when its quotient first becomes valid.
+assign div_out_ready = !equalizer_captured_q;
+
+assign out_valid_o = equalizer_result_present;
+assign y_o         = equalizer_result_q;
 
 always_comb begin
-    equalizer_counter_d = equalizer_counter_q;
-    if (equalizer_idle) begin
-        if (in_valid_i && in_ready_o) equalizer_counter_d = 1;
-    end else if (equalizer_done) begin
-        if (out_ready_i) equalizer_counter_d = '0;
-    end else begin
-        equalizer_counter_d = equalizer_counter_q + 1;
+    equalizer_busy_d     = equalizer_busy_q;
+    equalizer_captured_d = equalizer_captured_q;
+    equalizer_counter_d  = equalizer_counter_q;
+    equalizer_result_d   = equalizer_result_q;
+
+    if (equalizer_accept) begin
+        equalizer_busy_d     = 1;
+        equalizer_captured_d = 0;
+        equalizer_counter_d  = '0;
+    end else if (equalizer_busy_q) begin
+        if (equalizer_counter_q < EqualizerCounterWidth'(RawDivideLatencyUpperBound))
+            equalizer_counter_d = equalizer_counter_q + 1;
+        if (equalizer_result_present && out_ready_i) begin
+            equalizer_busy_d     = 0;
+            equalizer_captured_d = 0;
+        end
+    end
+
+    if (equalizer_capture) begin
+        equalizer_captured_d = 1;
+        equalizer_result_d   = convert_out_y;
     end
 end
 
 always_ff @(posedge clk_i) begin
-    if (!rst_ni) equalizer_counter_q <= '0;
-    else         equalizer_counter_q <= equalizer_counter_d;
+    if (!rst_ni) begin
+        equalizer_busy_q     <= 0;
+        equalizer_captured_q <= 0;
+        equalizer_counter_q  <= '0;
+        equalizer_result_q   <= '0;
+    end else begin
+        equalizer_busy_q     <= equalizer_busy_d;
+        equalizer_captured_q <= equalizer_captured_d;
+        equalizer_counter_q  <= equalizer_counter_d;
+        equalizer_result_q   <= equalizer_result_d;
+    end
 end
 
 `ifndef SYNTHESIS
 // The fixed window must be long enough that the raw quotient always arrives
 // before it elapses; otherwise the latency would become data-dependent again.
 always @(posedge clk_i) if (rst_ni) begin
-    assert (!equalizer_done || div_out_valid)
+    assert (!equalizer_result_present || equalizer_captured_q)
         else $fatal(0, "ternip_div equalizer window (%0d) shorter than raw divide latency",
                     RawDivideLatencyUpperBound);
 end
