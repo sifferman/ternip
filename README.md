@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/ternip.svg" alt="Ternip Logo" width="200"/>
   <h1>Ternip</h1>
-  <p>RTL accelerator by for Ridger Chu's <a href="https://github.com/ridgerchu/matmulfreellm">MatmulFree LLM</a></p>
+  <p>RTL accelerator for Ridger Chu's <a href="https://github.com/ridgerchu/matmulfreellm">MatmulFree LLM</a></p>
 </div>
 
 ---
