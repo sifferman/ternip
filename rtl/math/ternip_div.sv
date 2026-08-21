@@ -117,7 +117,7 @@ localparam int RawDivideLatencyUpperBound = DivInternalPrecision + 16;
 
 ternip_fixed_latency_equalizer #(
     .DataWidth(OutPrecision),
-    .LatencyUpperBound(RawDivideLatencyUpperBound)
+    .NumCycles(RawDivideLatencyUpperBound + 1)
 ) equalizer (
     .clk_i,
     .rst_ni,
@@ -125,15 +125,16 @@ ternip_fixed_latency_equalizer #(
     .in_valid_i,
     .in_ready_o,
 
-    .core_in_valid_o(raw_in_valid),
-    .core_in_ready_i(raw_in_ready),
-    .core_out_valid_i(div_out_valid),
-    .core_out_ready_o(div_out_ready),
-    .core_data_i(convert_out_y),
+    .unequalized_in_valid_o(raw_in_valid),
+    .unequalized_in_ready_i(raw_in_ready),
 
-    .data_o(y_o),
-    .out_valid_o,
-    .out_ready_i
+    .unequalized_result_valid_i(div_out_valid),
+    .unequalized_result_ready_o(div_out_ready),
+    .unequalized_result_data_i(convert_out_y),
+
+    .equalized_result_valid_o(out_valid_o),
+    .equalized_result_ready_i(out_ready_i),
+    .equalized_result_data_o(y_o)
 );
 
 if (Implementation == ternip_pkg::DIV_BSG) begin : div_bsg
