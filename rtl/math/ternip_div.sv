@@ -115,6 +115,12 @@ ternip_fixed_point_convert #(
 // cycles, long enough that every divider in all cores is done
 localparam int RawDivideLatencyUpperBound = DivInternalPrecision + 16;
 
+logic equalizer_idle;
+
+// Only one divide in flight, so the equalizer's window is never restarted early.
+assign raw_in_valid = in_valid_i && equalizer_idle;
+assign in_ready_o   = raw_in_ready && equalizer_idle;
+
 ternip_fixed_latency_equalizer #(
     .DataWidth(OutPrecision),
     .NumCycles(RawDivideLatencyUpperBound + 1)
@@ -122,11 +128,8 @@ ternip_fixed_latency_equalizer #(
     .clk_i,
     .rst_ni,
 
-    .in_valid_i,
-    .in_ready_o,
-
-    .unequalized_in_valid_o(raw_in_valid),
-    .unequalized_in_ready_i(raw_in_ready),
+    .idle_o(equalizer_idle),
+    .in_accepted_i(in_valid_i && in_ready_o),
 
     .unequalized_result_valid_i(div_out_valid),
     .unequalized_result_ready_o(div_out_ready),
