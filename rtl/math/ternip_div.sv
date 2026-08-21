@@ -79,14 +79,10 @@ ternip_fixed_point_convert #(
     .InPrecision(InAPrecision),
     .InExponent(InAExponent),
     .OutPrecision(DivInternalPrecision),
-    .OutExponent(InternalAInternalExponent)
+    .OutExponent(InternalAInternalExponent),
+    .NumPipelineStages(0)
 ) convert_a (
-    .clk_i,
-    .rst_ni,
-    .in_valid_i(1'b1),
-    .in_ready_o(),
-    .out_valid_o(),
-    .out_ready_i(1'b1),
+    .clk_i, .rst_ni, .in_valid_i(1'b1), .in_ready_o(), .out_valid_o(), .out_ready_i(1'b1), // unused, module combinational
     .in(a_i),
     .out(internal_a)
 );
@@ -95,14 +91,10 @@ ternip_fixed_point_convert #(
     .InPrecision(InBPrecision),
     .InExponent(InBExponent),
     .OutPrecision(DivInternalPrecision),
-    .OutExponent(InternalBInternalExponent)
+    .OutExponent(InternalBInternalExponent),
+    .NumPipelineStages(0)
 ) convert_b (
-    .clk_i,
-    .rst_ni,
-    .in_valid_i(1'b1),
-    .in_ready_o(),
-    .out_valid_o(),
-    .out_ready_i(1'b1),
+    .clk_i, .rst_ni, .in_valid_i(1'b1), .in_ready_o(), .out_valid_o(), .out_ready_i(1'b1), // unused, module combinational
     .in(b_i),
     .out(internal_b)
 );
@@ -111,97 +103,38 @@ ternip_fixed_point_convert #(
     .InPrecision(DivInternalPrecision),
     .InExponent(InternalYInternalExponent),
     .OutPrecision(OutPrecision),
-    .OutExponent(OutExponent)
+    .OutExponent(OutExponent),
+    .NumPipelineStages(0)
 ) convert_out (
-    .clk_i,
-    .rst_ni,
-    .in_valid_i(1'b1),
-    .in_ready_o(),
-    .out_valid_o(),
-    .out_ready_i(1'b1),
+    .clk_i, .rst_ni, .in_valid_i(1'b1), .in_ready_o(), .out_valid_o(), .out_ready_i(1'b1), // unused, module combinational
     .in(internal_y),
     .out(convert_out_y)
 );
 
 // Fixed-latency equalizer: the iterative divider takes a data-dependent number of
-// cycles, which would desync callers that run several dividers in lockstep. The
-// divider holds its quotient until yumi, so a single counter just delays the result
-// by a fixed, data-independent number of cycles -- long enough that every divide is done.
+// cycles, long enough that every divider in all cores is done
 localparam int RawDivideLatencyUpperBound = DivInternalPrecision + 16;
-localparam int EqualizerCounterWidth = $clog2(RawDivideLatencyUpperBound + 1);
 
-// The quotient is captured into equalizer_result_q as soon as the raw divider
-// presents it, and held until the window elapses. Registering it here (rather
-// than driving y_o straight from convert_out_y) also breaks the combinational
-// path from the divider's held quotient through the output requantize into the
-// consumer's own input conversion, which is the critical path out of rms.
-logic                              equalizer_busy_d, equalizer_busy_q;
-logic                              equalizer_captured_d, equalizer_captured_q;
-logic [EqualizerCounterWidth-1:0]  equalizer_counter_d, equalizer_counter_q;
-logic signed [OutPrecision-1:0]    equalizer_result_d, equalizer_result_q;
+ternip_fixed_latency_equalizer #(
+    .DataWidth(OutPrecision),
+    .LatencyUpperBound(RawDivideLatencyUpperBound)
+) equalizer (
+    .clk_i,
+    .rst_ni,
 
-wire equalizer_accept = in_valid_i && in_ready_o;
-wire equalizer_capture = equalizer_busy_q && div_out_valid && !equalizer_captured_q;
-wire equalizer_result_present
-    = equalizer_busy_q
-      && (equalizer_counter_q >= EqualizerCounterWidth'(RawDivideLatencyUpperBound));
+    .in_valid_i,
+    .in_ready_o,
 
-assign raw_in_valid = in_valid_i && !equalizer_busy_q;
-assign in_ready_o   = raw_in_ready && !equalizer_busy_q;
-// Drain the raw divider exactly once, when its quotient first becomes valid.
-assign div_out_ready = !equalizer_captured_q;
+    .core_in_valid_o(raw_in_valid),
+    .core_in_ready_i(raw_in_ready),
+    .core_out_valid_i(div_out_valid),
+    .core_out_ready_o(div_out_ready),
+    .core_data_i(convert_out_y),
 
-assign out_valid_o = equalizer_result_present;
-assign y_o         = equalizer_result_q;
-
-always_comb begin
-    equalizer_busy_d     = equalizer_busy_q;
-    equalizer_captured_d = equalizer_captured_q;
-    equalizer_counter_d  = equalizer_counter_q;
-    equalizer_result_d   = equalizer_result_q;
-
-    if (equalizer_accept) begin
-        equalizer_busy_d     = 1;
-        equalizer_captured_d = 0;
-        equalizer_counter_d  = '0;
-    end else if (equalizer_busy_q) begin
-        if (equalizer_counter_q < EqualizerCounterWidth'(RawDivideLatencyUpperBound))
-            equalizer_counter_d = equalizer_counter_q + 1;
-        if (equalizer_result_present && out_ready_i) begin
-            equalizer_busy_d     = 0;
-            equalizer_captured_d = 0;
-        end
-    end
-
-    if (equalizer_capture) begin
-        equalizer_captured_d = 1;
-        equalizer_result_d   = convert_out_y;
-    end
-end
-
-always_ff @(posedge clk_i) begin
-    if (!rst_ni) begin
-        equalizer_busy_q     <= 0;
-        equalizer_captured_q <= 0;
-        equalizer_counter_q  <= '0;
-        equalizer_result_q   <= '0;
-    end else begin
-        equalizer_busy_q     <= equalizer_busy_d;
-        equalizer_captured_q <= equalizer_captured_d;
-        equalizer_counter_q  <= equalizer_counter_d;
-        equalizer_result_q   <= equalizer_result_d;
-    end
-end
-
-`ifndef SYNTHESIS
-// The fixed window must be long enough that the raw quotient always arrives
-// before it elapses; otherwise the latency would become data-dependent again.
-always @(posedge clk_i) if (rst_ni) begin
-    assert (!equalizer_result_present || equalizer_captured_q)
-        else $fatal(0, "ternip_div equalizer window (%0d) shorter than raw divide latency",
-                    RawDivideLatencyUpperBound);
-end
-`endif
+    .data_o(y_o),
+    .out_valid_o,
+    .out_ready_i
+);
 
 if (Implementation == ternip_pkg::DIV_BSG) begin : div_bsg
 
