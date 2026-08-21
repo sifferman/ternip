@@ -125,12 +125,12 @@ ternip_fixed_latency_equalizer #(
     .in_valid_i,
     .in_ready_o,
 
-    .unequalized_in_valid_o(raw_in_valid),
-    .unequalized_in_ready_i(raw_in_ready),
+    .wrappedcore_in_valid_o(raw_in_valid),
+    .wrappedcore_in_ready_i(raw_in_ready),
 
-    .unequalized_result_valid_i(div_out_valid),
-    .unequalized_result_ready_o(div_out_ready),
-    .unequalized_result_data_i(convert_out_y),
+    .wrappedcore_out_valid_i(div_out_valid),
+    .wrappedcore_out_ready_o(div_out_ready),
+    .wrappedcore_out_data_i(convert_out_y),
 
     .equalized_result_valid_o(out_valid_o),
     .equalized_result_ready_i(out_ready_i),

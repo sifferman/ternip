@@ -39,12 +39,12 @@ module ternip_fixed_latency_equalizer #(
     input  logic                 in_valid_i,
     output logic                 in_ready_o,
 
-    output logic                 unequalized_in_valid_o,
-    input  logic                 unequalized_in_ready_i,
+    output logic                 wrappedcore_in_valid_o,
+    input  logic                 wrappedcore_in_ready_i,
 
-    input  logic                 unequalized_result_valid_i,
-    output logic                 unequalized_result_ready_o,
-    input  logic [DataWidth-1:0] unequalized_result_data_i,
+    input  logic                 wrappedcore_out_valid_i,
+    output logic                 wrappedcore_out_ready_o,
+    input  logic [DataWidth-1:0] wrappedcore_out_data_i,
 
     output logic                 equalized_result_valid_o,
     input  logic                 equalized_result_ready_i,
@@ -71,17 +71,17 @@ always_comb begin
     counter_d = counter_q;
     data_d    = data_q;
 
-    unequalized_in_valid_o     = 0;
+    wrappedcore_in_valid_o     = 0;
     in_ready_o                 = 0;
-    unequalized_result_ready_o = 1;
+    wrappedcore_out_ready_o = 1;
     equalized_result_valid_o   = 0;
 
     // Only pass the input handshake through while idle, so a second transaction
     // can never restart the window and cost the latency its independence.
     if (state_q == WAITING_FOR_IN) begin
 
-        unequalized_in_valid_o = in_valid_i;
-        in_ready_o             = unequalized_in_ready_i;
+        wrappedcore_in_valid_o = in_valid_i;
+        in_ready_o             = wrappedcore_in_ready_i;
 
         if (in_valid_i && in_ready_o) begin
             state_d   = WAITING_FOR_RESULT;
@@ -94,13 +94,13 @@ always_comb begin
             counter_d++;
 
         // Drain the core exactly once, when its result first becomes valid.
-        if (unequalized_result_valid_i && unequalized_result_ready_o) begin
-            data_d  = unequalized_result_data_i;
+        if (wrappedcore_out_valid_i && wrappedcore_out_ready_o) begin
+            data_d  = wrappedcore_out_data_i;
             state_d = HOLDING_RESULT;
         end
 
     end else if (state_q == HOLDING_RESULT) begin
-        unequalized_result_ready_o = 0;
+        wrappedcore_out_ready_o = 0;
 
         if (deadline_reached)
             equalized_result_valid_o = 1;
