@@ -94,17 +94,6 @@ always_comb begin
             state_d = HOLDING_RESULT;
         end
 
-        // The core blew the deadline, so NumCycles is too small. Retire on
-        // schedule regardless to keep lockstep peers aligned; the data is stale.
-        // Deliberately does not wait for ready -- this path is fatal.
-        if (state_d == WAITING_FOR_RESULT && deadline_reached) begin
-            state_d                  = WAITING_FOR_IN;
-            equalized_result_valid_o = 1;
-`ifndef SYNTHESIS
-            $fatal(0, "core did not produce a result within %0d cycles", NumCycles);
-`endif
-        end
-
     end else if (state_q == HOLDING_RESULT) begin
         unequalized_result_ready_o = 0;
 
@@ -134,6 +123,14 @@ always_ff @(posedge clk_i) begin
 end
 
 `ifndef SYNTHESIS
+// A core that misses the deadline makes the latency data-dependent again, which
+// means NumCycles is too small for it. Sampled on the clock rather than checked
+// inside the always_comb, so a transient evaluation cannot trip it.
+always @(posedge clk_i) if (rst_ni) begin
+    assert (!(state_q == WAITING_FOR_RESULT && deadline_reached))
+        else $fatal(0, "core did not produce a result within %0d cycles", NumCycles);
+end
+
 // The whole point of this module is that latency does not depend on the data, so
 // check it end to end rather than trusting the state machine not to add a cycle.
 property fixed_latency_p;
