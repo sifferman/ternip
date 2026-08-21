@@ -132,9 +132,9 @@ ternip_fixed_latency_equalizer #(
     .wrappedcore_out_ready_o(div_out_ready),
     .wrappedcore_out_data_i(convert_out_y),
 
-    .equalized_result_valid_o(out_valid_o),
-    .equalized_result_ready_i(out_ready_i),
-    .equalized_result_data_o(y_o)
+    .out_valid_o,
+    .out_ready_i,
+    .out_data_o(y_o)
 );
 
 if (Implementation == ternip_pkg::DIV_BSG) begin : div_bsg

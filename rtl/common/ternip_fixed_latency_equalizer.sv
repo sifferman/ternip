@@ -46,9 +46,9 @@ module ternip_fixed_latency_equalizer #(
     output logic                 wrappedcore_out_ready_o,
     input  logic [DataWidth-1:0] wrappedcore_out_data_i,
 
-    output logic                 equalized_result_valid_o,
-    input  logic                 equalized_result_ready_i,
-    output logic [DataWidth-1:0] equalized_result_data_o
+    output logic                 out_valid_o,
+    input  logic                 out_ready_i,
+    output logic [DataWidth-1:0] out_data_o
 );
 
 localparam int CounterWidth = $clog2(NumCycles);
@@ -64,7 +64,7 @@ logic [DataWidth-1:0]    data_d, data_q;
 
 wire deadline_reached = (counter_q >= CounterWidth'(NumCycles-1));
 
-assign equalized_result_data_o = data_q;
+assign out_data_o = data_q;
 
 always_comb begin
     state_d   = state_q;
@@ -74,7 +74,7 @@ always_comb begin
     wrappedcore_in_valid_o     = 0;
     in_ready_o                 = 0;
     wrappedcore_out_ready_o = 1;
-    equalized_result_valid_o   = 0;
+    out_valid_o   = 0;
 
     // Only pass the input handshake through while idle, so a second transaction
     // can never restart the window and cost the latency its independence.
@@ -103,11 +103,11 @@ always_comb begin
         wrappedcore_out_ready_o = 0;
 
         if (deadline_reached)
-            equalized_result_valid_o = 1;
+            out_valid_o = 1;
         else
             counter_d++;
 
-        if (equalized_result_valid_o && equalized_result_ready_i)
+        if (out_valid_o && out_ready_i)
             state_d = WAITING_FOR_IN;
 
     end else begin
@@ -140,7 +140,7 @@ end
 // check it end to end rather than trusting the state machine not to add a cycle.
 property fixed_latency_p;
     @(posedge clk_i) disable iff (!rst_ni)
-    (in_valid_i && in_ready_o) |-> ##NumCycles equalized_result_valid_o;
+    (in_valid_i && in_ready_o) |-> ##NumCycles out_valid_o;
 endproperty
 
 assert property (fixed_latency_p)
