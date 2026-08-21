@@ -28,10 +28,6 @@
 // ternip_fixed_latency_equalizer
 //
 // Gives a variable-latency ready/valid core a fixed, data-independent latency.
-//
-// Only one transaction may be in flight: the caller must gate its own input
-// handshake with idle_o, or the window restarts mid-flight and the latency stops
-// being fixed. Asserted below rather than enforced structurally.
 
 module ternip_fixed_latency_equalizer #(
     parameter int DataWidth = 16,
@@ -40,8 +36,11 @@ module ternip_fixed_latency_equalizer #(
     input  logic                 clk_i,
     input  logic                 rst_ni,
 
-    output logic                 idle_o,
-    input  logic                 in_accepted_i,
+    input  logic                 in_valid_i,
+    output logic                 in_ready_o,
+
+    output logic                 unequalized_in_valid_o,
+    input  logic                 unequalized_in_ready_i,
 
     input  logic                 unequalized_result_valid_i,
     output logic                 unequalized_result_ready_o,
@@ -65,7 +64,6 @@ logic [DataWidth-1:0]    data_d, data_q;
 
 wire deadline_reached = (counter_q >= CounterWidth'(NumCycles-1));
 
-assign idle_o                  = (state_q == WAITING_FOR_IN);
 assign equalized_result_data_o = data_q;
 
 always_comb begin
@@ -73,12 +71,19 @@ always_comb begin
     counter_d = counter_q;
     data_d    = data_q;
 
+    unequalized_in_valid_o     = 0;
+    in_ready_o                 = 0;
     unequalized_result_ready_o = 1;
     equalized_result_valid_o   = 0;
 
+    // Only pass the input handshake through while idle, so a second transaction
+    // can never restart the window and cost the latency its independence.
     if (state_q == WAITING_FOR_IN) begin
 
-        if (in_accepted_i) begin
+        unequalized_in_valid_o = in_valid_i;
+        in_ready_o             = unequalized_in_ready_i;
+
+        if (in_valid_i && in_ready_o) begin
             state_d   = WAITING_FOR_RESULT;
             counter_d = '0;
         end
@@ -135,20 +140,11 @@ end
 // check it end to end rather than trusting the state machine not to add a cycle.
 property fixed_latency_p;
     @(posedge clk_i) disable iff (!rst_ni)
-    in_accepted_i |-> ##NumCycles equalized_result_valid_o;
+    (in_valid_i && in_ready_o) |-> ##NumCycles equalized_result_valid_o;
 endproperty
 
 assert property (fixed_latency_p)
     else $fatal(0, "latency deviated from the fixed %0d cycles", NumCycles);
-
-// The caller owns the one-in-flight rule, so check that it kept it.
-property one_in_flight_p;
-    @(posedge clk_i) disable iff (!rst_ni)
-    in_accepted_i |-> idle_o;
-endproperty
-
-assert property (one_in_flight_p)
-    else $fatal(0, "input accepted while a transaction was still in flight");
 `endif
 
 endmodule
