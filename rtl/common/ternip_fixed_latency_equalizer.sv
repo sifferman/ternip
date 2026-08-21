@@ -36,18 +36,18 @@ module ternip_fixed_latency_equalizer #(
     input  logic                 clk_i,
     input  logic                 rst_ni,
 
-    input  logic                 in_valid_i,
     output logic                 in_ready_o,
+    input  logic                 in_valid_i,
 
-    output logic                 wrappedcore_in_valid_o,
     input  logic                 wrappedcore_in_ready_i,
+    output logic                 wrappedcore_in_valid_o,
 
-    input  logic                 wrappedcore_out_valid_i,
     output logic                 wrappedcore_out_ready_o,
+    input  logic                 wrappedcore_out_valid_i,
     input  logic [DataWidth-1:0] wrappedcore_out_data_i,
 
-    output logic                 out_valid_o,
     input  logic                 out_ready_i,
+    output logic                 out_valid_o,
     output logic [DataWidth-1:0] out_data_o
 );
 
@@ -71,30 +71,32 @@ always_comb begin
     counter_d = counter_q;
     data_d    = data_q;
 
-    wrappedcore_in_valid_o     = 0;
-    in_ready_o                 = 0;
+    in_ready_o              = 0;
+    wrappedcore_in_valid_o  = 0;
     wrappedcore_out_ready_o = 1;
-    out_valid_o   = 0;
+    out_valid_o             = 0;
 
     // Only pass the input handshake through while idle, so a second transaction
     // can never restart the window and cost the latency its independence.
     if (state_q == WAITING_FOR_IN) begin
 
-        wrappedcore_in_valid_o = in_valid_i;
         in_ready_o             = wrappedcore_in_ready_i;
+        wrappedcore_in_valid_o = in_valid_i;
 
-        if (in_valid_i && in_ready_o) begin
+        if (in_ready_o && in_valid_i) begin
             state_d   = WAITING_FOR_RESULT;
             counter_d = '0;
         end
 
     end else if (state_q == WAITING_FOR_RESULT) begin
 
-        if (!deadline_reached)
-            counter_d++;
+        counter_d++; // assuming deadline_reached==0
+`ifndef SYNTHESIS
+        if (deadline_reached)
+            $fatal(0, "core did not produce a result within %0d cycles", NumCycles);
+`endif
 
-        // Drain the core exactly once, when its result first becomes valid.
-        if (wrappedcore_out_valid_i && wrappedcore_out_ready_o) begin
+        if (wrappedcore_out_ready_o && wrappedcore_out_valid_i) begin
             data_d  = wrappedcore_out_data_i;
             state_d = HOLDING_RESULT;
         end
@@ -107,7 +109,7 @@ always_comb begin
         else
             counter_d++;
 
-        if (out_valid_o && out_ready_i)
+        if (out_ready_i && out_valid_o)
             state_d = WAITING_FOR_IN;
 
     end else begin
@@ -128,23 +130,16 @@ always_ff @(posedge clk_i) begin
 end
 
 `ifndef SYNTHESIS
-// A core that misses the deadline makes the latency data-dependent again, which
-// means NumCycles is too small for it. Sampled on the clock rather than checked
-// inside the always_comb, so a transient evaluation cannot trip it.
-always @(posedge clk_i) if (rst_ni) begin
-    assert (!(state_q == WAITING_FOR_RESULT && deadline_reached))
-        else $fatal(0, "core did not produce a result within %0d cycles", NumCycles);
-end
 
-// The whole point of this module is that latency does not depend on the data, so
-// check it end to end rather than trusting the state machine not to add a cycle.
+// Ensure that correct latency is achieved
 property fixed_latency_p;
     @(posedge clk_i) disable iff (!rst_ni)
-    (in_valid_i && in_ready_o) |-> ##NumCycles out_valid_o;
+    (in_ready_o && in_valid_i) |-> ##NumCycles out_valid_o;
 endproperty
 
 assert property (fixed_latency_p)
     else $fatal(0, "latency deviated from the fixed %0d cycles", NumCycles);
+
 `endif
 
 endmodule

@@ -82,7 +82,7 @@ ternip_fixed_point_convert #(
     .OutExponent(InternalAInternalExponent),
     .NumPipelineStages(0)
 ) convert_a (
-    .clk_i, .rst_ni, .in_valid_i(1'b1), .in_ready_o(), .out_valid_o(), .out_ready_i(1'b1), // unused, module combinational
+    .clk_i, .rst_ni, .in_ready_o(), .in_valid_i(1'b1), .out_ready_i(1'b1), .out_valid_o(), // unused, module combinational
     .in(a_i),
     .out(internal_a)
 );
@@ -94,7 +94,7 @@ ternip_fixed_point_convert #(
     .OutExponent(InternalBInternalExponent),
     .NumPipelineStages(0)
 ) convert_b (
-    .clk_i, .rst_ni, .in_valid_i(1'b1), .in_ready_o(), .out_valid_o(), .out_ready_i(1'b1), // unused, module combinational
+    .clk_i, .rst_ni, .in_ready_o(), .in_valid_i(1'b1), .out_ready_i(1'b1), .out_valid_o(), // unused, module combinational
     .in(b_i),
     .out(internal_b)
 );
@@ -106,7 +106,7 @@ ternip_fixed_point_convert #(
     .OutExponent(OutExponent),
     .NumPipelineStages(0)
 ) convert_out (
-    .clk_i, .rst_ni, .in_valid_i(1'b1), .in_ready_o(), .out_valid_o(), .out_ready_i(1'b1), // unused, module combinational
+    .clk_i, .rst_ni, .in_ready_o(), .in_valid_i(1'b1), .out_ready_i(1'b1), .out_valid_o(), // unused, module combinational
     .in(internal_y),
     .out(convert_out_y)
 );
@@ -122,18 +122,18 @@ ternip_fixed_latency_equalizer #(
     .clk_i,
     .rst_ni,
 
-    .in_valid_i,
     .in_ready_o,
+    .in_valid_i,
 
-    .wrappedcore_in_valid_o(raw_in_valid),
     .wrappedcore_in_ready_i(raw_in_ready),
+    .wrappedcore_in_valid_o(raw_in_valid),
 
-    .wrappedcore_out_valid_i(div_out_valid),
     .wrappedcore_out_ready_o(div_out_ready),
+    .wrappedcore_out_valid_i(div_out_valid),
     .wrappedcore_out_data_i(convert_out_y),
 
-    .out_valid_o,
     .out_ready_i,
+    .out_valid_o,
     .out_data_o(y_o)
 );
 
