@@ -47,13 +47,13 @@ module ternip_fixed_point_convert #(
     input  logic                           clk_i,
     input  logic                           rst_ni,
 
-    input  logic signed [InPrecision-1:0]  in,
-    input  logic                           in_valid_i,
     output logic                           in_ready_o,
+    input  logic                           in_valid_i,
+    input  logic signed [InPrecision-1:0]  in,
 
-    output logic signed [OutPrecision-1:0] out,
+    input  logic                           out_ready_i,
     output logic                           out_valid_o,
-    input  logic                           out_ready_i
+    output logic signed [OutPrecision-1:0] out
 );
 
     if (InPrecision < 1) $fatal(0, "InPrecision (%0d) must be positive", InPrecision);

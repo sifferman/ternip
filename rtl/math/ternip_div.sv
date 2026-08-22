@@ -79,14 +79,10 @@ ternip_fixed_point_convert #(
     .InPrecision(InAPrecision),
     .InExponent(InAExponent),
     .OutPrecision(DivInternalPrecision),
-    .OutExponent(InternalAInternalExponent)
+    .OutExponent(InternalAInternalExponent),
+    .NumPipelineStages(0)
 ) convert_a (
-    .clk_i,
-    .rst_ni,
-    .in_valid_i(1'b1),
-    .in_ready_o(),
-    .out_valid_o(),
-    .out_ready_i(1'b1),
+    .clk_i, .rst_ni, .in_ready_o(), .in_valid_i(1'b1), .out_ready_i(1'b1), .out_valid_o(), // unused, module combinational
     .in(a_i),
     .out(internal_a)
 );
@@ -95,14 +91,10 @@ ternip_fixed_point_convert #(
     .InPrecision(InBPrecision),
     .InExponent(InBExponent),
     .OutPrecision(DivInternalPrecision),
-    .OutExponent(InternalBInternalExponent)
+    .OutExponent(InternalBInternalExponent),
+    .NumPipelineStages(0)
 ) convert_b (
-    .clk_i,
-    .rst_ni,
-    .in_valid_i(1'b1),
-    .in_ready_o(),
-    .out_valid_o(),
-    .out_ready_i(1'b1),
+    .clk_i, .rst_ni, .in_ready_o(), .in_valid_i(1'b1), .out_ready_i(1'b1), .out_valid_o(), // unused, module combinational
     .in(b_i),
     .out(internal_b)
 );
@@ -111,61 +103,39 @@ ternip_fixed_point_convert #(
     .InPrecision(DivInternalPrecision),
     .InExponent(InternalYInternalExponent),
     .OutPrecision(OutPrecision),
-    .OutExponent(OutExponent)
+    .OutExponent(OutExponent),
+    .NumPipelineStages(0)
 ) convert_out (
-    .clk_i,
-    .rst_ni,
-    .in_valid_i(1'b1),
-    .in_ready_o(),
-    .out_valid_o(),
-    .out_ready_i(1'b1),
+    .clk_i, .rst_ni, .in_ready_o(), .in_valid_i(1'b1), .out_ready_i(1'b1), .out_valid_o(), // unused, module combinational
     .in(internal_y),
     .out(convert_out_y)
 );
 
 // Fixed-latency equalizer: the iterative divider takes a data-dependent number of
-// cycles, which would desync callers that run several dividers in lockstep. The
-// divider holds its quotient until yumi, so a single counter just delays the result
-// by a fixed, data-independent number of cycles -- long enough that every divide is done.
+// cycles, long enough that every divider in all cores is done
 localparam int RawDivideLatencyUpperBound = DivInternalPrecision + 16;
-localparam int EqualizerCounterWidth = $clog2(RawDivideLatencyUpperBound + 1);
 
-// counter == 0 is idle; a divide counts to RawDivideLatencyUpperBound, then signals done.
-logic [EqualizerCounterWidth-1:0] equalizer_counter_d, equalizer_counter_q;
-wire equalizer_idle = (equalizer_counter_q == '0);
-wire equalizer_done = (equalizer_counter_q >= EqualizerCounterWidth'(RawDivideLatencyUpperBound));
+ternip_fixed_latency_equalizer #(
+    .DataWidth(OutPrecision),
+    .NumCycles(RawDivideLatencyUpperBound + 1)
+) equalizer (
+    .clk_i,
+    .rst_ni,
 
-assign raw_in_valid  = in_valid_i && equalizer_idle;
-assign in_ready_o    = raw_in_ready && equalizer_idle;
-assign div_out_ready = equalizer_done && out_ready_i;
-assign out_valid_o   = equalizer_done;
-assign y_o           = convert_out_y;
+    .in_ready_o,
+    .in_valid_i,
 
-always_comb begin
-    equalizer_counter_d = equalizer_counter_q;
-    if (equalizer_idle) begin
-        if (in_valid_i && in_ready_o) equalizer_counter_d = 1;
-    end else if (equalizer_done) begin
-        if (out_ready_i) equalizer_counter_d = '0;
-    end else begin
-        equalizer_counter_d = equalizer_counter_q + 1;
-    end
-end
+    .wrappedcore_in_ready_i(raw_in_ready),
+    .wrappedcore_in_valid_o(raw_in_valid),
 
-always_ff @(posedge clk_i) begin
-    if (!rst_ni) equalizer_counter_q <= '0;
-    else         equalizer_counter_q <= equalizer_counter_d;
-end
+    .wrappedcore_out_ready_o(div_out_ready),
+    .wrappedcore_out_valid_i(div_out_valid),
+    .wrappedcore_out_data_i(convert_out_y),
 
-`ifndef SYNTHESIS
-// The fixed window must be long enough that the raw quotient always arrives
-// before it elapses; otherwise the latency would become data-dependent again.
-always @(posedge clk_i) if (rst_ni) begin
-    assert (!equalizer_done || div_out_valid)
-        else $fatal(0, "ternip_div equalizer window (%0d) shorter than raw divide latency",
-                    RawDivideLatencyUpperBound);
-end
-`endif
+    .out_ready_i,
+    .out_valid_o,
+    .out_data_o(y_o)
+);
 
 if (Implementation == ternip_pkg::DIV_BSG) begin : div_bsg
 
