@@ -95,8 +95,11 @@ end else begin : gen_piecewise_sig
                 selected_intercept = fixed_point_t'($rtoi(
                     ternip_pkg::sigmoid_segment_intercept(SigmoidModel, segment_index)
                     * (2.0 ** (-FixedPointExponent)) + 0.5));
-                selected_shift = 8'($rtoi(
-                    -$ln(ternip_pkg::sigmoid_segment_slope(SigmoidModel, segment_index)) / $ln(2.0) + 0.5));
+                // Plain assignment, not a width cast: sv2v leaves a literal-width
+                // cast like 8'(...) untranslated and Vivado's Verilog parser
+                // rejects it. Assignment to the 8-bit target truncates the same way.
+                selected_shift = $rtoi(
+                    -$ln(ternip_pkg::sigmoid_segment_slope(SigmoidModel, segment_index)) / $ln(2.0) + 0.5);
                 selected_slope = longint'(
                     ternip_pkg::sigmoid_segment_slope(SigmoidModel, segment_index)
                     * (2.0 ** SlopeFractionBits) + 0.5);
