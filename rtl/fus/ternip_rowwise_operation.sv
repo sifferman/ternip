@@ -466,7 +466,7 @@ ternip_sig_parallelized #(
     .FixedPointExponent(Cfg.FixedPointExponent),
     .VectorParallelism(Cfg.VectorParallelism),
     .LutParallelism(Cfg.LutParallelism),
-    .UseHardSigmoid(Cfg.UseHardSigmoid)
+    .SigmoidModel(Cfg.SigmoidModel)
 ) sig_parallelized (
     .clk_i,
     .rst_ni,
@@ -485,7 +485,7 @@ ternip_csig_parallelized #(
     .FixedPointExponent(Cfg.FixedPointExponent),
     .VectorParallelism(Cfg.VectorParallelism),
     .LutParallelism(Cfg.LutParallelism),
-    .UseHardSigmoid(Cfg.UseHardSigmoid)
+    .SigmoidModel(Cfg.SigmoidModel)
 ) csig_parallelized (
     .clk_i,
     .rst_ni,
@@ -504,7 +504,7 @@ ternip_silu_parallelized #(
     .FixedPointExponent(Cfg.FixedPointExponent),
     .VectorParallelism(Cfg.VectorParallelism),
     .LutParallelism(Cfg.LutParallelism),
-    .UseHardSigmoid(Cfg.UseHardSigmoid)
+    .SigmoidModel(Cfg.SigmoidModel)
 ) silu_parallelized (
     .clk_i,
     .rst_ni,

@@ -39,7 +39,7 @@ module ternip_csig_parallelized #(
     parameter int FixedPointExponent  = Cfg.FixedPointExponent,
     parameter int VectorParallelism   = Cfg.VectorParallelism,
     parameter int LutParallelism      = Cfg.LutParallelism,
-    parameter bit UseHardSigmoid      = Cfg.UseHardSigmoid,
+    parameter ternip_pkg::sigmoid_model_e SigmoidModel = Cfg.SigmoidModel,
 
     localparam type fixed_point_t  = logic signed [FixedPointPrecision-1:0],
     localparam type vector_chunk_t = fixed_point_t [VectorParallelism-1:0]
@@ -56,7 +56,10 @@ module ternip_csig_parallelized #(
     output vector_chunk_t vector_data_o
 );
 
-localparam int Parallelism = UseHardSigmoid ? VectorParallelism : LutParallelism;
+// Only the LUT implementation is area-limited; the arithmetic approximations
+// run at full vector width.
+localparam int Parallelism =
+    (SigmoidModel == ternip_pkg::SIGMOID_LUT) ? LutParallelism : VectorParallelism;
 
 logic                           r_in_ready;
 logic                           r_in_valid;
@@ -98,7 +101,7 @@ for (genvar i_GEN = 0; i_GEN < Parallelism; i_GEN++) begin
     ternip_csig #(
         .FixedPointPrecision(FixedPointPrecision),
         .FixedPointExponent(FixedPointExponent),
-        .UseHardSigmoid(UseHardSigmoid)
+        .SigmoidModel(SigmoidModel)
     ) csig (
         .a_i(r_out_data[i_GEN]),
         .y_o(w_in_data[i_GEN])

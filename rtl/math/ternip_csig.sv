@@ -30,8 +30,9 @@
 //
 // Scalar fixed-point complementary sigmoid.
 //
-// Computes y_o = 1 - sigmoid(a_i). With UseHardSigmoid set, this uses a
-// first-order approximation. Otherwise it reads a precomputed LUT.
+// Computes y_o = 1 - sigmoid(a_i). SIGMOID_LUT reads a
+// precomputed LUT; every approximation instantiates ternip_sig and subtracts,
+// which is exact for the complement and avoids duplicating the approximation.
 // This is combinational.
 
 module ternip_csig #(
@@ -39,7 +40,7 @@ module ternip_csig #(
 
     parameter int  FixedPointPrecision = Cfg.FixedPointPrecision,
     parameter int  FixedPointExponent  = Cfg.FixedPointExponent,
-    parameter bit  UseHardSigmoid      = Cfg.UseHardSigmoid,
+    parameter ternip_pkg::sigmoid_model_e SigmoidModel = Cfg.SigmoidModel,
 
     localparam type fixed_point_t = logic signed [FixedPointPrecision-1:0]
 ) (
@@ -48,27 +49,29 @@ module ternip_csig #(
 );
 
 localparam fixed_point_t FixedPointOne = ternip_pkg::fixed_point_one(FixedPointExponent);
-localparam int FixedPointUnaryOperationLutSize = UseHardSigmoid ? 1 : (2 ** FixedPointPrecision);
+localparam int FixedPointUnaryOperationLutSize =
+    (SigmoidModel == ternip_pkg::SIGMOID_LUT) ? (2 ** FixedPointPrecision) : 1;
 
-if (UseHardSigmoid) begin : gen_hard_csig
-
-    // 1 - hard_sigmoid(x) = clamp(0.5 - x/4, 0, 1)
-    always_comb begin
-        fixed_point_t linear;
-        linear = (FixedPointOne / 2) - (a_i / 4);
-        if (linear <= 0)
-            y_o = '0;
-        else if (linear >= FixedPointOne)
-            y_o = FixedPointOne;
-        else
-            y_o = linear;
-    end
-
-end else begin : gen_lut_csig
+if (SigmoidModel == ternip_pkg::SIGMOID_LUT) begin : gen_lut_csig
 
     fixed_point_t CSIGMOID_LUT [FixedPointUnaryOperationLutSize];
     initial $readmemh(`READMEM_PATH(LUT_csig_FixedPoint_to_FixedPoint.memh), CSIGMOID_LUT);
     assign y_o = CSIGMOID_LUT[$unsigned(a_i)];
+
+end else begin : gen_approx_csig
+
+    fixed_point_t sigmoid_result;
+
+    ternip_sig #(
+        .FixedPointPrecision(FixedPointPrecision),
+        .FixedPointExponent(FixedPointExponent),
+        .SigmoidModel(SigmoidModel)
+    ) sigmoid (
+        .a_i,
+        .y_o(sigmoid_result)
+    );
+
+    assign y_o = FixedPointOne - sigmoid_result;
 
 end
 
