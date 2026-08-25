@@ -68,6 +68,8 @@ logic                           r_out_ready;
 logic                           r_out_valid;
 fixed_point_t [Parallelism-1:0] r_out_data;
 
+fixed_point_t [Parallelism-1:0] pipelined_data;
+
 logic                           w_in_ready;
 logic                           w_in_valid;
 fixed_point_t [Parallelism-1:0] w_in_data;
@@ -97,19 +99,35 @@ bsg_parallel_in_serial_out #(
     .yumi_i(r_out_ready && r_out_valid)
 );
 
+// Register the serialiser output before the combinational sigmoid. Without this
+// stage the path runs PISO memory read -> sigmoid -> SIPO setup in a single
+// cycle, which is the dominant critical path in rowwise_operation.
+ternip_pipelined_interconnect #(
+    .DataWidth(Parallelism*FixedPointPrecision),
+    .NumStages(1)
+) piso_sig_pipeline (
+    .clk_i,
+    .rst_ni,
+
+    .in_ready_o(r_out_ready),
+    .in_valid_i(r_out_valid),
+    .in_data_i(r_out_data),
+
+    .out_ready_i(w_in_ready),
+    .out_valid_o(w_in_valid),
+    .out_data_o(pipelined_data)
+);
+
 for (genvar i_GEN = 0; i_GEN < Parallelism; i_GEN++) begin
     ternip_sig #(
         .FixedPointPrecision(FixedPointPrecision),
         .FixedPointExponent(FixedPointExponent),
         .SigmoidModel(SigmoidModel)
     ) sig (
-        .a_i(r_out_data[i_GEN]),
+        .a_i(pipelined_data[i_GEN]),
         .y_o(w_in_data[i_GEN])
     );
 end
-
-assign r_out_ready = w_in_ready;
-assign w_in_valid  = r_out_valid;
 
 // https://github.com/bespoke-silicon-group/basejump_stl/blob/a43571d2/bsg_dataflow/bsg_serial_in_parallel_out_full.sv
 bsg_serial_in_parallel_out_full #(
