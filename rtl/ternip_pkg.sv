@@ -44,6 +44,101 @@ typedef enum logic [1:0] {
     MUL_NONE
 } mul_impl_e;
 
+// Piecewise-linear sigmoid approximations, symmetric about (0, 1/2). Each is the
+// minimax fit for its segment count; the POWER2 variants restrict every slope to a
+// power of two so the multiply degrades to a shift. Max |error| vs true sigmoid:
+//   LUT                                 exact (2**FixedPointPrecision entries)
+//   APPROXIMATE_1ST_ORDER               0.056050
+//   APPROXIMATE_3RD_ORDER               0.017376
+//   APPROXIMATE_5TH_ORDER               0.008362
+//   APPROXIMATE_POWER2_SLOPE_1ST_ORDER  0.119203  (the long-standing hard sigmoid)
+//   APPROXIMATE_POWER2_SLOPE_3RD_ORDER  0.034857
+//   APPROXIMATE_POWER2_SLOPE_5TH_ORDER  0.015848
+typedef enum logic [2:0] {
+    SIGMOID_LUT,
+    SIGMOID_APPROXIMATE_1ST_ORDER,
+    SIGMOID_APPROXIMATE_3RD_ORDER,
+    SIGMOID_APPROXIMATE_5TH_ORDER,
+    SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER,
+    SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER,
+    SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER
+} sigmoid_model_e;
+
+function automatic int sigmoid_segment_count(sigmoid_model_e model);
+    case (model)
+        SIGMOID_APPROXIMATE_1ST_ORDER,
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 1;
+        SIGMOID_APPROXIMATE_3RD_ORDER,
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER: return 3;
+        SIGMOID_APPROXIMATE_5TH_ORDER,
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER: return 5;
+        default:                                    return 0;   // LUT
+    endcase
+endfunction
+
+// Upper bound of segment `index`; below segment 0's lower bound the output is 0,
+// at or above the last bound it is 1.
+function automatic bit sigmoid_slopes_are_powers_of_two(sigmoid_model_e model);
+    case (model)
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER,
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER,
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER: return 1;
+        default:                                    return 0;
+    endcase
+endfunction
+
+function automatic real sigmoid_segment_upper_bound(sigmoid_model_e model, int index);
+    case (model)
+        SIGMOID_APPROXIMATE_1ST_ORDER: return 2.823822;
+        SIGMOID_APPROXIMATE_3RD_ORDER:
+            case (index) 0: return -1.652934; 1: return 1.652934; default: return 4.035162; endcase
+        SIGMOID_APPROXIMATE_5TH_ORDER:
+            case (index) 0: return -2.508140; 1: return -1.243333; 2: return 1.243333;
+                         3: return 2.508140; default: return 4.775714; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 2.0;
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
+            case (index) 0: return -1.245525; 1: return 1.245525; default: return 4.263425; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
+            case (index) 0: return -2.559516; 1: return -0.938899; 2: return 0.938899;
+                         3: return 2.559516; default: return 4.565853; endcase
+        default: return 0.0;
+    endcase
+endfunction
+
+function automatic real sigmoid_segment_slope(sigmoid_model_e model, int index);
+    case (model)
+        SIGMOID_APPROXIMATE_1ST_ORDER: return 0.177065;
+        SIGMOID_APPROXIMATE_3RD_ORDER:
+            case (index) 1: return 0.215776; default: return 0.060169; endcase
+        SIGMOID_APPROXIMATE_5TH_ORDER:
+            case (index) 2: return 0.228825; 1, 3: return 0.117462; default: return 0.029515; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 0.25;
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
+            case (index) 1: return 0.25; default: return 0.0625; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
+            case (index) 2: return 0.25; 1, 3: return 0.125; default: return 0.03125; endcase
+        default: return 0.0;
+    endcase
+endfunction
+
+function automatic real sigmoid_segment_intercept(sigmoid_model_e model, int index);
+    case (model)
+        SIGMOID_APPROXIMATE_1ST_ORDER: return 0.5;
+        SIGMOID_APPROXIMATE_3RD_ORDER:
+            case (index) 0: return 0.242793; 1: return 0.5; default: return 0.757207; endcase
+        SIGMOID_APPROXIMATE_5TH_ORDER:
+            case (index) 0: return 0.140956; 1: return 0.361539; 2: return 0.5;
+                         3: return 0.638461; default: return 0.859044; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 0.5;
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
+            case (index) 0: return 0.266464; 1: return 0.5; default: return 0.733536; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
+            case (index) 0: return 0.142683; 1: return 0.382638; 2: return 0.5;
+                         3: return 0.617362; default: return 0.857317; endcase
+        default: return 0.0;
+    endcase
+endfunction
+
 typedef enum logic [1:0] {
     DIV_BSG,
     DIV_ROUNDROBIN,
@@ -60,7 +155,7 @@ typedef struct packed {
     int unsigned LutParallelism;
     int unsigned FixedPointPrecision;
     int          FixedPointExponent;
-    bit          UseHardSigmoid;
+    sigmoid_model_e SigmoidModel;
     int unsigned BatchSize;
     int unsigned NumVectorRegisters;
     int unsigned ImmediateWidth;
