@@ -30,15 +30,15 @@
 //
 // Scalar fixed-point SiLU.
 //
-// Computes y_o = a_i * sigmoid(a_i). With UseHardSigmoid set, this uses a
-// first-order approximation. Otherwise it reads a precomputed LUT.
+// Computes y_o = a_i * sigmoid(a_i). SIGMOID_LUT reads a
+// precomputed LUT; every approximation instantiates ternip_sig and multiplies.
 
 module ternip_silu #(
     parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG,
 
     parameter int FixedPointPrecision = Cfg.FixedPointPrecision,
     parameter int FixedPointExponent  = Cfg.FixedPointExponent,
-    parameter bit UseHardSigmoid      = Cfg.UseHardSigmoid,
+    parameter ternip_pkg::sigmoid_model_e SigmoidModel = Cfg.SigmoidModel,
     parameter ternip_pkg::mul_impl_e MultiplicationImplementation = Cfg.MultiplicationImplementation,
 
     localparam type fixed_point_t = logic signed [FixedPointPrecision-1:0]
@@ -55,24 +55,22 @@ module ternip_silu #(
     output fixed_point_t y_o
 );
 
-localparam fixed_point_t FixedPointOne = ternip_pkg::fixed_point_one(FixedPointExponent);
-localparam int FixedPointUnaryOperationLutSize = UseHardSigmoid ? 1 : (2 ** FixedPointPrecision);
+localparam int FixedPointUnaryOperationLutSize =
+    (SigmoidModel == ternip_pkg::SIGMOID_LUT) ? (2 ** FixedPointPrecision) : 1;
 
-if (UseHardSigmoid) begin : gen_hard_silu
+if (SigmoidModel != ternip_pkg::SIGMOID_LUT) begin : gen_approx_silu
 
-    // hard_silu(x) = x * clamp(x/4 + 0.5, 0, 1)
+    // silu(x) = x * sigmoid(x); the approximation lives entirely in ternip_sig.
     fixed_point_t sig_result;
 
-    always_comb begin
-        fixed_point_t linear;
-        linear = (a_i / 4) + (FixedPointOne / 2);
-        if (linear <= 0)
-            sig_result = '0;
-        else if (linear >= FixedPointOne)
-            sig_result = FixedPointOne;
-        else
-            sig_result = linear;
-    end
+    ternip_sig #(
+        .FixedPointPrecision(FixedPointPrecision),
+        .FixedPointExponent(FixedPointExponent),
+        .SigmoidModel(SigmoidModel)
+    ) sigmoid (
+        .a_i,
+        .y_o(sig_result)
+    );
 
     // Pipeline register — breaks combinational path from sigmoid into ternip_mul.
     // in_ready_o: accept when stage is empty or ternip_mul is consuming this cycle.

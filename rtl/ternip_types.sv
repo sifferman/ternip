@@ -36,7 +36,7 @@ class ternip_types #(
     parameter ternip_pkg::ternip_cfg_t Cfg = `TERNIP_CFG
 );
 
-    localparam int FixedPointUnaryOperationLutSize = Cfg.UseHardSigmoid ? 1 : (2 ** Cfg.FixedPointPrecision);
+    localparam int FixedPointUnaryOperationLutSize = (Cfg.SigmoidModel == ternip_pkg::SIGMOID_LUT) ? (2 ** Cfg.FixedPointPrecision) : 1;
 
     localparam int VectorSizeInBytes     = Cfg.D * Cfg.FixedPointPrecision / 8;
     localparam int BytesPerFixedPointNum = Cfg.FixedPointPrecision / 8;

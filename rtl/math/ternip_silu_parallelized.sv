@@ -39,7 +39,7 @@ module ternip_silu_parallelized #(
     parameter int  FixedPointExponent           = Cfg.FixedPointExponent,
     parameter int  VectorParallelism            = Cfg.VectorParallelism,
     parameter int  LutParallelism               = Cfg.LutParallelism,
-    parameter bit  UseHardSigmoid               = Cfg.UseHardSigmoid,
+    parameter ternip_pkg::sigmoid_model_e SigmoidModel = Cfg.SigmoidModel,
     parameter ternip_pkg::mul_impl_e MultiplicationImplementation = Cfg.MultiplicationImplementation,
 
     localparam type fixed_point_t = logic signed [FixedPointPrecision-1:0],
@@ -57,7 +57,10 @@ module ternip_silu_parallelized #(
     output vector_chunk_t vector_data_o
 );
 
-localparam int Parallelism = UseHardSigmoid ? VectorParallelism : LutParallelism;
+// Only the LUT implementation is area-limited; the arithmetic approximations
+// run at full vector width.
+localparam int Parallelism =
+    (SigmoidModel == ternip_pkg::SIGMOID_LUT) ? LutParallelism : VectorParallelism;
 
 logic                           r_in_ready;
 logic                           r_in_valid;
@@ -95,7 +98,7 @@ bsg_parallel_in_serial_out #(
     .yumi_i(r_out_ready && r_out_valid)
 );
 
-if (UseHardSigmoid) begin : gen_hard_silu
+if (SigmoidModel != ternip_pkg::SIGMOID_LUT) begin : gen_approx_silu
 
     // ternip_silu is multi-cycle
     logic [Parallelism-1:0] silu_in_ready;
@@ -108,7 +111,7 @@ if (UseHardSigmoid) begin : gen_hard_silu
         ternip_silu #(
             .FixedPointPrecision(FixedPointPrecision),
             .FixedPointExponent(FixedPointExponent),
-            .UseHardSigmoid(UseHardSigmoid),
+            .SigmoidModel(SigmoidModel),
             .MultiplicationImplementation(MultiplicationImplementation)
         ) silu (
             .clk_i,
@@ -134,7 +137,7 @@ end else begin : gen_lut_silu
         ternip_silu #(
             .FixedPointPrecision(FixedPointPrecision),
             .FixedPointExponent(FixedPointExponent),
-            .UseHardSigmoid(UseHardSigmoid),
+            .SigmoidModel(SigmoidModel),
             .MultiplicationImplementation(MultiplicationImplementation)
         ) silu (
             .clk_i,

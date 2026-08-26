@@ -39,7 +39,7 @@ module ternip_sig_parallelized #(
     parameter int FixedPointExponent  = Cfg.FixedPointExponent,
     parameter int VectorParallelism   = Cfg.VectorParallelism,
     parameter int LutParallelism      = Cfg.LutParallelism,
-    parameter bit UseHardSigmoid      = Cfg.UseHardSigmoid,
+    parameter ternip_pkg::sigmoid_model_e SigmoidModel = Cfg.SigmoidModel,
 
     localparam type fixed_point_t  = logic signed [FixedPointPrecision-1:0],
     localparam type vector_chunk_t = fixed_point_t [VectorParallelism-1:0]
@@ -56,7 +56,10 @@ module ternip_sig_parallelized #(
     output vector_chunk_t vector_data_o
 );
 
-localparam int Parallelism = UseHardSigmoid ? VectorParallelism : LutParallelism;
+// Only the LUT implementation is area-limited; the arithmetic approximations
+// run at full vector width.
+localparam int Parallelism =
+    (SigmoidModel == ternip_pkg::SIGMOID_LUT) ? LutParallelism : VectorParallelism;
 
 logic                           r_in_ready;
 logic                           r_in_valid;
@@ -64,6 +67,8 @@ vector_chunk_t                  r_in_data;
 logic                           r_out_ready;
 logic                           r_out_valid;
 fixed_point_t [Parallelism-1:0] r_out_data;
+
+fixed_point_t [Parallelism-1:0] pipelined_data;
 
 logic                           w_in_ready;
 logic                           w_in_valid;
@@ -94,19 +99,35 @@ bsg_parallel_in_serial_out #(
     .yumi_i(r_out_ready && r_out_valid)
 );
 
+// Register the serialiser output before the combinational sigmoid. Without this
+// stage the path runs PISO memory read -> sigmoid -> SIPO setup in a single
+// cycle, which is the dominant critical path in rowwise_operation.
+ternip_pipelined_interconnect #(
+    .DataWidth(Parallelism*FixedPointPrecision),
+    .NumStages(1)
+) piso_sig_pipeline (
+    .clk_i,
+    .rst_ni,
+
+    .in_ready_o(r_out_ready),
+    .in_valid_i(r_out_valid),
+    .in_data_i(r_out_data),
+
+    .out_ready_i(w_in_ready),
+    .out_valid_o(w_in_valid),
+    .out_data_o(pipelined_data)
+);
+
 for (genvar i_GEN = 0; i_GEN < Parallelism; i_GEN++) begin
     ternip_sig #(
         .FixedPointPrecision(FixedPointPrecision),
         .FixedPointExponent(FixedPointExponent),
-        .UseHardSigmoid(UseHardSigmoid)
+        .SigmoidModel(SigmoidModel)
     ) sig (
-        .a_i(r_out_data[i_GEN]),
+        .a_i(pipelined_data[i_GEN]),
         .y_o(w_in_data[i_GEN])
     );
 end
-
-assign r_out_ready = w_in_ready;
-assign w_in_valid  = r_out_valid;
 
 // https://github.com/bespoke-silicon-group/basejump_stl/blob/a43571d2/bsg_dataflow/bsg_serial_in_parallel_out_full.sv
 bsg_serial_in_parallel_out_full #(
