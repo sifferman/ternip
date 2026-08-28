@@ -69,6 +69,9 @@ logic                           r_out_ready;
 logic                           r_out_valid;
 fixed_point_t [Parallelism-1:0] r_out_data;
 
+fixed_point_t [Parallelism-1:0] pipelined_data;
+logic                           pipelined_valid;
+
 logic                           w_in_ready;
 logic                           w_in_valid;
 fixed_point_t [Parallelism-1:0] w_in_data;
@@ -107,6 +110,26 @@ if (SigmoidModel != ternip_pkg::SIGMOID_LUT) begin : gen_approx_silu
     wire all_silu_in_ready  = &silu_in_ready;
     wire all_silu_out_valid = &silu_out_valid;
 
+    // Register the serialiser output before the silu lanes. Without this stage the
+    // path runs PISO memory read -> silu, and the &silu_in_ready reduction feeds
+    // straight back into the PISO's yumi, which is the dominant critical path in
+    // rowwise_operation at D=2560.
+    ternip_pipelined_interconnect #(
+        .DataWidth(Parallelism*FixedPointPrecision),
+        .NumStages(1)
+    ) piso_silu_pipeline (
+        .clk_i,
+        .rst_ni,
+
+        .in_ready_o(r_out_ready),
+        .in_valid_i(r_out_valid),
+        .in_data_i(r_out_data),
+
+        .out_ready_i(all_silu_in_ready),
+        .out_valid_o(pipelined_valid),
+        .out_data_o(pipelined_data)
+    );
+
     for (genvar i_GEN = 0; i_GEN < Parallelism; i_GEN++) begin
         ternip_silu #(
             .FixedPointPrecision(FixedPointPrecision),
@@ -118,8 +141,8 @@ if (SigmoidModel != ternip_pkg::SIGMOID_LUT) begin : gen_approx_silu
             .rst_ni,
 
             .in_ready_o(silu_in_ready[i_GEN]),
-            .in_valid_i(r_out_valid && all_silu_in_ready),
-            .a_i(r_out_data[i_GEN]),
+            .in_valid_i(pipelined_valid && all_silu_in_ready),
+            .a_i(pipelined_data[i_GEN]),
 
             .out_ready_i(w_in_ready && all_silu_out_valid),
             .out_valid_o(silu_out_valid[i_GEN]),
@@ -127,7 +150,6 @@ if (SigmoidModel != ternip_pkg::SIGMOID_LUT) begin : gen_approx_silu
         );
     end
 
-    assign r_out_ready = all_silu_in_ready;
     assign w_in_valid  = all_silu_out_valid;
 
 end else begin : gen_lut_silu
