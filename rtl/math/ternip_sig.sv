@@ -87,28 +87,24 @@ end else begin : gen_piecewise_sig
         below_first_segment = 0;
         above_last_segment  = 1;
         for (int segment_index = NumSegments-1; segment_index >= 0; segment_index--) begin
-            if (a_i < fixed_point_t'($rtoi(
-                    ternip_pkg::sigmoid_segment_upper_bound(SigmoidModel, segment_index)
-                    * (2.0 ** (-FixedPointExponent))
-                    + ((ternip_pkg::sigmoid_segment_upper_bound(SigmoidModel, segment_index) < 0.0)
-                       ? -0.5 : 0.5)))) begin
-                selected_intercept = fixed_point_t'($rtoi(
-                    ternip_pkg::sigmoid_segment_intercept(SigmoidModel, segment_index)
-                    * (2.0 ** (-FixedPointExponent)) + 0.5));
+            if (a_i < fixed_point_t'(ternip_pkg::sigmoid_scale_to_fixed_point(
+                    ternip_pkg::sigmoid_segment_upper_bound_scaled(SigmoidModel, segment_index),
+                    FixedPointExponent))) begin
+                selected_intercept = fixed_point_t'(ternip_pkg::sigmoid_scale_to_fixed_point(
+                    ternip_pkg::sigmoid_segment_intercept_scaled(SigmoidModel, segment_index),
+                    FixedPointExponent));
                 // Plain assignment, not a width cast: sv2v leaves a literal-width
                 // cast like 8'(...) untranslated and Vivado's Verilog parser
                 // rejects it. Assignment to the 8-bit target truncates the same way.
-                selected_shift = $rtoi(
-                    -$ln(ternip_pkg::sigmoid_segment_slope(SigmoidModel, segment_index)) / $ln(2.0) + 0.5);
-                selected_slope = longint'(
-                    ternip_pkg::sigmoid_segment_slope(SigmoidModel, segment_index)
-                    * (2.0 ** SlopeFractionBits) + 0.5);
+                selected_shift = ternip_pkg::sigmoid_segment_shift(SigmoidModel, segment_index);
+                selected_slope = ternip_pkg::sigmoid_segment_slope_fixed(
+                    SigmoidModel, segment_index, SlopeFractionBits);
                 above_last_segment = 0;
             end
         end
-        below_first_segment = (a_i < fixed_point_t'($rtoi(
-            -ternip_pkg::sigmoid_segment_upper_bound(SigmoidModel, NumSegments-1)
-            * (2.0 ** (-FixedPointExponent)) - 0.5)));
+        below_first_segment = (a_i < fixed_point_t'(ternip_pkg::sigmoid_scale_to_fixed_point(
+            -ternip_pkg::sigmoid_segment_upper_bound_scaled(SigmoidModel, NumSegments-1),
+            FixedPointExponent)));
     end
 
     fixed_point_t scaled_input;
