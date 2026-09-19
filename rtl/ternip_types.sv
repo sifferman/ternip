@@ -59,9 +59,13 @@ class ternip_types #(
 
 
     typedef logic signed [Cfg.FixedPointPrecision-1:0] fixed_point_t;
-    localparam fixed_point_t FixedPointMin = ternip_pkg::fixed_point_min(Cfg.FixedPointPrecision);
-    localparam fixed_point_t FixedPointMax = ternip_pkg::fixed_point_max(Cfg.FixedPointPrecision);
-    localparam fixed_point_t FixedPointOne = ternip_pkg::fixed_point_one(Cfg.FixedPointExponent);
+    // Written out rather than calling ternip_pkg: Verilator ICEs on a package
+    // function referenced from a parameterized class (V3Task "func ref not
+    // under scope"). The module callers still use the functions, and
+    // ternip_types_assertions carries the range checks they perform.
+    localparam fixed_point_t FixedPointMin = 1 << (Cfg.FixedPointPrecision-1);
+    localparam fixed_point_t FixedPointMax = (1 << (Cfg.FixedPointPrecision-1)) - 1;
+    localparam fixed_point_t FixedPointOne = 1 <<< -Cfg.FixedPointExponent;
 
 
     typedef logic signed [RmsAccumulatorWidth-1:0] rms_accumulator_t;
@@ -119,6 +123,12 @@ module ternip_types_assertions; import ternip_pkg::*;
 
 // instruction_t width check (instruction_t lives only in ternip_types#(Cfg)).
 localparam ternip_cfg_t Cfg = `TERNIP_CFG;
+// Range checks for the constants ternip_types writes out rather than taking
+// from ternip_pkg, which guards them for its module callers.
+if ((Cfg.FixedPointPrecision < 1) || (Cfg.FixedPointPrecision > $bits(integer)))
+    $fatal(0, "FixedPointPrecision %0d outside representable range [1, %0d].", Cfg.FixedPointPrecision, $bits(integer));
+if ((-Cfg.FixedPointExponent < 0) || (-Cfg.FixedPointExponent > $bits(integer)-1))
+    $fatal(0, "FixedPointExponent %0d yields a shift outside representable range [0, %0d].", Cfg.FixedPointExponent, $bits(integer)-1);
 if ($bits(ternip_types#(Cfg)::instruction_t) != Cfg.InstructionWidth)
     $fatal(0, "Expected an instruction_t width of %0d, but received %0d.", Cfg.InstructionWidth, $bits(ternip_types#(Cfg)::instruction_t));
 
