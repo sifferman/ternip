@@ -87,56 +87,83 @@ function automatic bit sigmoid_slopes_are_powers_of_two(sigmoid_model_e model);
     endcase
 endfunction
 
-function automatic real sigmoid_segment_upper_bound(sigmoid_model_e model, int index);
+// The segment tables below are integers scaled by SigmoidTableScale. They read
+// as reals, but sv2v cannot fold real arithmetic and emits `real` functions
+// verbatim, which the Verilog-2005 frontends in yosys and Vivado reject.
+localparam int SigmoidTableScale = 1000000;
+
+function automatic int sigmoid_segment_upper_bound_scaled(sigmoid_model_e model, int index);
     case (model)
-        SIGMOID_APPROXIMATE_1ST_ORDER: return 2.823822;
+        SIGMOID_APPROXIMATE_1ST_ORDER: return 2823822;
         SIGMOID_APPROXIMATE_3RD_ORDER:
-            case (index) 0: return -1.652934; 1: return 1.652934; default: return 4.035162; endcase
+            case (index) 0: return -1652934; 1: return 1652934; default: return 4035162; endcase
         SIGMOID_APPROXIMATE_5TH_ORDER:
-            case (index) 0: return -2.508140; 1: return -1.243333; 2: return 1.243333;
-                         3: return 2.508140; default: return 4.775714; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 2.0;
+            case (index) 0: return -2508140; 1: return -1243333; 2: return 1243333;
+                         3: return 2508140; default: return 4775714; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 2000000;
         SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
-            case (index) 0: return -1.245525; 1: return 1.245525; default: return 4.263425; endcase
+            case (index) 0: return -1245525; 1: return 1245525; default: return 4263425; endcase
         SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
-            case (index) 0: return -2.559516; 1: return -0.938899; 2: return 0.938899;
-                         3: return 2.559516; default: return 4.565853; endcase
-        default: return 0.0;
+            case (index) 0: return -2559516; 1: return -938899; 2: return 938899;
+                         3: return 2559516; default: return 4565853; endcase
+        default: return 0;
     endcase
 endfunction
 
-function automatic real sigmoid_segment_slope(sigmoid_model_e model, int index);
+function automatic int sigmoid_segment_slope_scaled(sigmoid_model_e model, int index);
     case (model)
-        SIGMOID_APPROXIMATE_1ST_ORDER: return 0.177065;
+        SIGMOID_APPROXIMATE_1ST_ORDER: return 177065;
         SIGMOID_APPROXIMATE_3RD_ORDER:
-            case (index) 1: return 0.215776; default: return 0.060169; endcase
+            case (index) 1: return 215776; default: return 60169; endcase
         SIGMOID_APPROXIMATE_5TH_ORDER:
-            case (index) 2: return 0.228825; 1, 3: return 0.117462; default: return 0.029515; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 0.25;
+            case (index) 2: return 228825; 1, 3: return 117462; default: return 29515; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 250000;
         SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
-            case (index) 1: return 0.25; default: return 0.0625; endcase
+            case (index) 1: return 250000; default: return 62500; endcase
         SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
-            case (index) 2: return 0.25; 1, 3: return 0.125; default: return 0.03125; endcase
-        default: return 0.0;
+            case (index) 2: return 250000; 1, 3: return 125000; default: return 31250; endcase
+        default: return 0;
     endcase
 endfunction
 
-function automatic real sigmoid_segment_intercept(sigmoid_model_e model, int index);
+function automatic int sigmoid_segment_intercept_scaled(sigmoid_model_e model, int index);
     case (model)
-        SIGMOID_APPROXIMATE_1ST_ORDER: return 0.5;
+        SIGMOID_APPROXIMATE_1ST_ORDER: return 500000;
         SIGMOID_APPROXIMATE_3RD_ORDER:
-            case (index) 0: return 0.242793; 1: return 0.5; default: return 0.757207; endcase
+            case (index) 0: return 242793; 1: return 500000; default: return 757207; endcase
         SIGMOID_APPROXIMATE_5TH_ORDER:
-            case (index) 0: return 0.140956; 1: return 0.361539; 2: return 0.5;
-                         3: return 0.638461; default: return 0.859044; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 0.5;
+            case (index) 0: return 140956; 1: return 361539; 2: return 500000;
+                         3: return 638461; default: return 859044; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 500000;
         SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
-            case (index) 0: return 0.266464; 1: return 0.5; default: return 0.733536; endcase
+            case (index) 0: return 266464; 1: return 500000; default: return 733536; endcase
         SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
-            case (index) 0: return 0.142683; 1: return 0.382638; 2: return 0.5;
-                         3: return 0.617362; default: return 0.857317; endcase
-        default: return 0.0;
+            case (index) 0: return 142683; 1: return 382638; 2: return 500000;
+                         3: return 617362; default: return 857317; endcase
+        default: return 0;
     endcase
+endfunction
+
+// value/SigmoidTableScale in fixed point, rounded half away from zero. The
+// sign-matched half plus truncating division is what $rtoi(x +/- 0.5) did.
+function automatic longint sigmoid_scale_to_fixed_point(int scaled_value, int exponent);
+    longint scaled = longint'(scaled_value) << (-exponent);
+    longint half   = (scaled_value < 0) ? -(SigmoidTableScale / 2) : (SigmoidTableScale / 2);
+    return (scaled + half) / SigmoidTableScale;
+endfunction
+
+// -log2(slope) rounded, as the smallest shift placing slope*2**shift above
+// 2**-0.5. SigmoidTableScale/sqrt(2) is 707107.
+function automatic int sigmoid_segment_shift(sigmoid_model_e model, int index);
+    longint slope = longint'(sigmoid_segment_slope_scaled(model, index));
+    for (int shift = 0; shift < 32; shift++)
+        if ((slope << shift) > 707107) return shift;
+    return 0;
+endfunction
+
+function automatic longint sigmoid_segment_slope_fixed(sigmoid_model_e model, int index, int fraction_bits);
+    longint slope = longint'(sigmoid_segment_slope_scaled(model, index));
+    return ((slope << fraction_bits) + (SigmoidTableScale / 2)) / SigmoidTableScale;
 endfunction
 
 typedef enum logic [1:0] {
