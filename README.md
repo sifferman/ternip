@@ -8,7 +8,7 @@
 
 ## Overview
 
-Ternip is a parameterizable, open-source RTL implementation of a hardware accelerator targeting the MatmulFree LLM algoirhtnm. MatmulFree LLMs replace traditional matrix multiplication with ternary weight operations, enabling significant reductions in compute and memory bandwidth — making them well-suited for hardware acceleration.
+Ternip is a parameterizable, open-source RTL implementation of a hardware accelerator targeting the MatmulFree LLM algorithm.
 
 This project is licensed under the [BSD 3-Clause License](LICENSE) and is free to use, modify, and distribute.
 
@@ -23,8 +23,7 @@ This project is licensed under the [BSD 3-Clause License](LICENSE) and is free t
 | [rtl/fus/ternip_rms.sv](rtl/fus/ternip_rms.sv) | RMS normalization unit |
 | [rtl/math/](rtl/math/) | Math modules (sqrt, sigmoid, SiLU, and more) |
 
-Configuration is passed as a threaded `ternip_pkg::ternip_cfg_t` struct
-parameter (`Cfg`) rather than a global config file.
+Configuration is passed as a threaded `ternip_pkg::ternip_cfg_t` struct parameter (`Cfg`) rather than a global config file.
 
 *Tests and build flow are not currently provided but will be made available shortly.*
 
