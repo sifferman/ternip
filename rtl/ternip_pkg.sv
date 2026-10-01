@@ -34,6 +34,48 @@
 
 package ternip_pkg;
 
+// ======================================================= //
+// Helper functions for fixed-point and integer operations //
+// ======================================================= //
+function automatic integer abs_int(integer a);
+    return ((a<0) ? -a : a);
+endfunction
+
+function automatic integer max_int(integer a, integer b);
+    return ((a>b) ? a : b);
+endfunction
+
+function automatic integer min_int(integer a, integer b);
+    return ((a<b) ? a : b);
+endfunction
+
+function automatic integer clamp_int(integer lo, integer x, integer hi);
+    return max_int(lo, min_int(x, hi));
+endfunction
+
+function automatic integer fixed_point_min(integer precision);
+    if ((precision < 1) || (precision > $bits(integer)))
+        $fatal(1, "fixed_point_min: precision %0d outside representable range [1, %0d]", precision, $bits(integer));
+    return (1 << (precision-1));
+endfunction
+
+function automatic integer fixed_point_max(integer precision);
+    if ((precision < 1) || (precision > $bits(integer)))
+        $fatal(1, "fixed_point_max: precision %0d outside representable range [1, %0d]", precision, $bits(integer));
+    return (1 << (precision-1)) - 1;
+endfunction
+
+function automatic integer fixed_point_one(integer exponent);
+    if ((-exponent < 0) || (-exponent > $bits(integer)-1))
+        $fatal(1, "fixed_point_one: exponent %0d yields a shift outside representable range [0, %0d]", exponent, $bits(integer)-1);
+    return (1 <<< -exponent);
+endfunction
+
+// Rounds half away from zero, so a table constant and its negation convert symmetrically.
+function automatic longint real_to_fixed_point(real value, integer exponent);
+    return $rtoi((value * (2.0 ** -exponent)) + ((value < 0.0) ? -0.5 : 0.5));
+endfunction
+
 // =========================== //
 // Implementation-select enums //
 // =========================== //
@@ -76,94 +118,101 @@ function automatic int sigmoid_segment_count(sigmoid_model_e model);
     endcase
 endfunction
 
-// Upper bound of segment `index`; below segment 0's lower bound the output is 0,
-// at or above the last bound it is 1.
-function automatic bit sigmoid_slopes_are_powers_of_two(sigmoid_model_e model);
-    case (model)
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER,
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER,
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER: return 1;
-        default:                                    return 0;
-    endcase
-endfunction
+// One segment, in the integer arithmetic the hardware performs: the multiplying
+// models scale by scaled_slope, the POWER2 models shift right by right_shift.
+typedef struct packed {
+    longint upper_bound;
+    longint intercept;
+    longint scaled_slope;
+    int     right_shift;
+} sigmoid_segment_t;
 
-// The segment tables below are integers scaled by SigmoidTableScale. They read
-// as reals, but sv2v cannot fold real arithmetic and emits `real` functions
-// verbatim, which the Verilog-2005 frontends in yosys and Vivado reject.
-localparam int SigmoidTableScale = 1000000;
-
-function automatic int sigmoid_segment_upper_bound_scaled(sigmoid_model_e model, int index);
+// Upper bound of segment `index`; below segment 0's lower bound the
+// output is 0, at or above the last bound it is 1.
+function automatic real sigmoid_segment_upper_bound(sigmoid_model_e model, int index);
     case (model)
-        SIGMOID_APPROXIMATE_1ST_ORDER: return 2823822;
+        SIGMOID_APPROXIMATE_1ST_ORDER: return 2.823822;
         SIGMOID_APPROXIMATE_3RD_ORDER:
-            case (index) 0: return -1652934; 1: return 1652934; default: return 4035162; endcase
+            case (index) 0: return -1.652934; 1: return 1.652934; default: return 4.035162; endcase
         SIGMOID_APPROXIMATE_5TH_ORDER:
-            case (index) 0: return -2508140; 1: return -1243333; 2: return 1243333;
-                         3: return 2508140; default: return 4775714; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 2000000;
+            case (index) 0: return -2.508140; 1: return -1.243333; 2: return 1.243333;
+                         3: return 2.508140; default: return 4.775714; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 2.0;
         SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
-            case (index) 0: return -1245525; 1: return 1245525; default: return 4263425; endcase
+            case (index) 0: return -1.245525; 1: return 1.245525; default: return 4.263425; endcase
         SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
-            case (index) 0: return -2559516; 1: return -938899; 2: return 938899;
-                         3: return 2559516; default: return 4565853; endcase
-        default: return 0;
+            case (index) 0: return -2.559516; 1: return -0.938899; 2: return 0.938899;
+                         3: return 2.559516; default: return 4.565853; endcase
+        default: return 0.0;
     endcase
 endfunction
 
-function automatic int sigmoid_segment_slope_scaled(sigmoid_model_e model, int index);
+function automatic real sigmoid_segment_slope(sigmoid_model_e model, int index);
     case (model)
-        SIGMOID_APPROXIMATE_1ST_ORDER: return 177065;
+        SIGMOID_APPROXIMATE_1ST_ORDER: return 0.177065;
         SIGMOID_APPROXIMATE_3RD_ORDER:
-            case (index) 1: return 215776; default: return 60169; endcase
+            case (index) 1: return 0.215776; default: return 0.060169; endcase
         SIGMOID_APPROXIMATE_5TH_ORDER:
-            case (index) 2: return 228825; 1, 3: return 117462; default: return 29515; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 250000;
+            case (index) 2: return 0.228825; 1, 3: return 0.117462; default: return 0.029515; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 0.25;
         SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
-            case (index) 1: return 250000; default: return 62500; endcase
+            case (index) 1: return 0.25; default: return 0.0625; endcase
         SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
-            case (index) 2: return 250000; 1, 3: return 125000; default: return 31250; endcase
-        default: return 0;
+            case (index) 2: return 0.25; 1, 3: return 0.125; default: return 0.03125; endcase
+        default: return 0.0;
     endcase
 endfunction
 
-function automatic int sigmoid_segment_intercept_scaled(sigmoid_model_e model, int index);
+function automatic real sigmoid_segment_intercept(sigmoid_model_e model, int index);
     case (model)
-        SIGMOID_APPROXIMATE_1ST_ORDER: return 500000;
+        SIGMOID_APPROXIMATE_1ST_ORDER: return 0.5;
         SIGMOID_APPROXIMATE_3RD_ORDER:
-            case (index) 0: return 242793; 1: return 500000; default: return 757207; endcase
+            case (index) 0: return 0.242793; 1: return 0.5; default: return 0.757207; endcase
         SIGMOID_APPROXIMATE_5TH_ORDER:
-            case (index) 0: return 140956; 1: return 361539; 2: return 500000;
-                         3: return 638461; default: return 859044; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 500000;
+            case (index) 0: return 0.140956; 1: return 0.361539; 2: return 0.5;
+                         3: return 0.638461; default: return 0.859044; endcase
+        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 0.5;
         SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
-            case (index) 0: return 266464; 1: return 500000; default: return 733536; endcase
+            case (index) 0: return 0.266464; 1: return 0.5; default: return 0.733536; endcase
         SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
-            case (index) 0: return 142683; 1: return 382638; 2: return 500000;
-                         3: return 617362; default: return 857317; endcase
-        default: return 0;
+            case (index) 0: return 0.142683; 1: return 0.382638; 2: return 0.5;
+                         3: return 0.617362; default: return 0.857317; endcase
+        default: return 0.0;
     endcase
 endfunction
 
-// value/SigmoidTableScale in fixed point, rounded half away from zero. The
-// sign-matched half plus truncating division is what $rtoi(x +/- 0.5) did.
-function automatic longint sigmoid_scale_to_fixed_point(int scaled_value, int exponent);
-    longint scaled = longint'(scaled_value) << (-exponent);
-    longint half   = (scaled_value < 0) ? -(SigmoidTableScale / 2) : (SigmoidTableScale / 2);
-    return (scaled + half) / SigmoidTableScale;
-endfunction
-
-// -log2(slope) rounded, as the smallest shift placing slope*2**shift above
-// 2**-0.5. SigmoidTableScale/sqrt(2) is 707107.
-function automatic int sigmoid_segment_shift(sigmoid_model_e model, int index);
-    longint slope = longint'(sigmoid_segment_slope_scaled(model, index));
-    for (int shift = 0; shift < 32; shift++)
-        if ((slope << shift) > 707107) return shift;
+function automatic int sigmoid_segment_right_shift(sigmoid_model_e model, int index);
+    for (int right_shift = 0; right_shift < $bits(integer); right_shift++)
+        if ((sigmoid_segment_slope(model, index) * (2.0 ** right_shift)) >= 1.0) return right_shift;
     return 0;
 endfunction
 
-function automatic longint sigmoid_segment_slope_fixed(sigmoid_model_e model, int index, int fraction_bits);
-    longint slope = longint'(sigmoid_segment_slope_scaled(model, index));
-    return ((slope << fraction_bits) + (SigmoidTableScale / 2)) / SigmoidTableScale;
+function automatic bit sigmoid_slopes_are_powers_of_two(sigmoid_model_e model);
+    for (int index = 0; index < sigmoid_segment_count(model); index++)
+        if ((sigmoid_segment_slope(model, index)
+             * (2.0 ** sigmoid_segment_right_shift(model, index))) != 1.0) return 0;
+    return 1;
+endfunction
+
+function automatic sigmoid_segment_t sigmoid_segment(sigmoid_model_e model, int index,
+                                                     integer fixed_point_exponent, integer slope_fraction_bits);
+    return '{
+        upper_bound:  real_to_fixed_point(sigmoid_segment_upper_bound(model, index), fixed_point_exponent),
+        intercept:    real_to_fixed_point(sigmoid_segment_intercept(model, index), fixed_point_exponent),
+        scaled_slope: real_to_fixed_point(sigmoid_segment_slope(model, index), -slope_fraction_bits),
+        right_shift:  sigmoid_segment_right_shift(model, index)
+    };
+endfunction
+
+localparam int MaxSigmoidSegments = sigmoid_segment_count(SIGMOID_APPROXIMATE_5TH_ORDER);
+
+// The whole table, so a module holds it as one localparam and no real reaches its body.
+function automatic sigmoid_segment_t [MaxSigmoidSegments-1:0] sigmoid_segments(
+        sigmoid_model_e model, integer fixed_point_exponent, integer slope_fraction_bits);
+    sigmoid_segments = '0;
+    for (int index = 0; index < sigmoid_segment_count(model); index++)
+        sigmoid_segments[index] =
+            sigmoid_segment(model, index, fixed_point_exponent, slope_fraction_bits);
 endfunction
 
 typedef enum logic [1:0] {
@@ -240,43 +289,6 @@ typedef enum logic [2:0] {
     RMS,
     STALL
 } fu_e;
-
-// ======================================================= //
-// Helper functions for fixed-point and integer operations //
-// ======================================================= //
-function automatic integer abs_int(integer a);
-    return ((a<0) ? -a : a);
-endfunction
-
-function automatic integer max_int(integer a, integer b);
-    return ((a>b) ? a : b);
-endfunction
-
-function automatic integer min_int(integer a, integer b);
-    return ((a<b) ? a : b);
-endfunction
-
-function automatic integer clamp_int(integer lo, integer x, integer hi);
-    return max_int(lo, min_int(x, hi));
-endfunction
-
-function automatic integer fixed_point_min(integer precision);
-    if ((precision < 1) || (precision > $bits(integer)))
-        $fatal(1, "fixed_point_min: precision %0d outside representable range [1, %0d]", precision, $bits(integer));
-    return (1 << (precision-1));
-endfunction
-
-function automatic integer fixed_point_max(integer precision);
-    if ((precision < 1) || (precision > $bits(integer)))
-        $fatal(1, "fixed_point_max: precision %0d outside representable range [1, %0d]", precision, $bits(integer));
-    return (1 << (precision-1)) - 1;
-endfunction
-
-function automatic integer fixed_point_one(integer exponent);
-    if ((-exponent < 0) || (-exponent > $bits(integer)-1))
-        $fatal(1, "fixed_point_one: exponent %0d yields a shift outside representable range [0, %0d]", exponent, $bits(integer)-1);
-    return (1 <<< -exponent);
-endfunction
 
 // ==================================================== //
 // 2-bit ternary type for ternary matrix multiplication //

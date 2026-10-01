@@ -58,75 +58,47 @@ if (SigmoidModel == ternip_pkg::SIGMOID_LUT) begin : gen_lut_sig
 
 end else begin : gen_piecewise_sig
 
-    // y = slope*x + intercept on whichever segment holds x; 0 below the first
-    // segment, 1 at or above the last bound.
-    //
     // The segment is chosen FIRST and only then is the arithmetic done, so this
-    // costs one shift/multiply rather than one per segment. Evaluating every
-    // segment in parallel and muxing the results afterwards cost ~2.8 ns of
-    // slack on a D=2048 build -- the model was fine, the structure was not.
-    //
-    // POWER2 models have every slope a negative power of two, so the scaling is
-    // a variable right shift. The bias term makes that shift truncate toward
-    // zero rather than floor, which is what reproduces the long-standing hard
-    // sigmoid bit-for-bit under SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER.
-    localparam int NumSegments = ternip_pkg::sigmoid_segment_count(SigmoidModel);
+    // costs one shift/multiply rather than one per segment.
+    localparam int NumSegments          = ternip_pkg::sigmoid_segment_count(SigmoidModel);
     localparam bit SlopesArePowersOfTwo = ternip_pkg::sigmoid_slopes_are_powers_of_two(SigmoidModel);
-    localparam int SlopeFractionBits = 16;
+    localparam int SlopeFractionBits    = 16;
 
-    fixed_point_t selected_intercept;
-    logic [7:0]   selected_shift;      // POWER2 path: log2(1/slope)
-    longint       selected_slope;      // general path: slope << SlopeFractionBits
-    logic         below_first_segment;
-    logic         above_last_segment;
+    localparam ternip_pkg::sigmoid_segment_t [ternip_pkg::MaxSigmoidSegments-1:0] Segments =
+        ternip_pkg::sigmoid_segments(SigmoidModel, FixedPointExponent, SlopeFractionBits);
+    localparam fixed_point_t LastSegmentUpperBound  = Segments[NumSegments-1].upper_bound;
+    localparam fixed_point_t FirstSegmentLowerBound = -LastSegmentUpperBound;
+
+    ternip_pkg::sigmoid_segment_t selected_segment;
+    logic                         input_above_every_segment;
 
     always_comb begin
-        selected_intercept  = '0;
-        selected_shift      = '0;
-        selected_slope      = 0;
-        below_first_segment = 0;
-        above_last_segment  = 1;
-        for (int segment_index = NumSegments-1; segment_index >= 0; segment_index--) begin
-            if (a_i < fixed_point_t'(ternip_pkg::sigmoid_scale_to_fixed_point(
-                    ternip_pkg::sigmoid_segment_upper_bound_scaled(SigmoidModel, segment_index),
-                    FixedPointExponent))) begin
-                selected_intercept = fixed_point_t'(ternip_pkg::sigmoid_scale_to_fixed_point(
-                    ternip_pkg::sigmoid_segment_intercept_scaled(SigmoidModel, segment_index),
-                    FixedPointExponent));
-                // Plain assignment, not a width cast: sv2v leaves a literal-width
-                // cast like 8'(...) untranslated and Vivado's Verilog parser
-                // rejects it. Assignment to the 8-bit target truncates the same way.
-                selected_shift = ternip_pkg::sigmoid_segment_shift(SigmoidModel, segment_index);
-                selected_slope = ternip_pkg::sigmoid_segment_slope_fixed(
-                    SigmoidModel, segment_index, SlopeFractionBits);
-                above_last_segment = 0;
+        selected_segment          = '0;
+        input_above_every_segment = 1;
+        for (int segment_index = NumSegments-1; segment_index >= 0; segment_index--)
+            if (a_i < Segments[segment_index].upper_bound) begin
+                selected_segment          = Segments[segment_index];
+                input_above_every_segment = 0;
             end
-        end
-        below_first_segment = (a_i < fixed_point_t'(ternip_pkg::sigmoid_scale_to_fixed_point(
-            -ternip_pkg::sigmoid_segment_upper_bound_scaled(SigmoidModel, NumSegments-1),
-            FixedPointExponent)));
     end
 
     fixed_point_t scaled_input;
 
-    if (SlopesArePowersOfTwo) begin : gen_shift_scale
-        // Bias makes the arithmetic shift truncate toward zero, matching a divide.
+    if (SlopesArePowersOfTwo) begin : gen_right_shift_by_slope
         fixed_point_t truncation_bias;
         assign truncation_bias = (a_i < 0)
-                               ? fixed_point_t'((1 << selected_shift) - 1)
+                               ? fixed_point_t'((1 << selected_segment.right_shift) - 1)
                                : '0;
-        assign scaled_input = fixed_point_t'((a_i + truncation_bias) >>> selected_shift);
-    end else begin : gen_multiply_scale
+        assign scaled_input = fixed_point_t'((a_i + truncation_bias) >>> selected_segment.right_shift);
+    end else begin : gen_multiply_by_slope
         logic signed [FixedPointPrecision+SlopeFractionBits+1:0] product;
-        assign product = selected_slope * a_i;
+        assign product = selected_segment.scaled_slope * a_i;
         assign scaled_input = fixed_point_t'(product / (2 ** SlopeFractionBits));
     end
 
-    always_comb begin
-        if (below_first_segment)     y_o = '0;
-        else if (above_last_segment) y_o = FixedPointOne;
-        else                         y_o = scaled_input + selected_intercept;
-    end
+    assign y_o = (a_i < FirstSegmentLowerBound) ? '0
+               : input_above_every_segment      ? FixedPointOne
+               : scaled_input + fixed_point_t'(selected_segment.intercept);
 
 end
 
