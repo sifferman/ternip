@@ -60,16 +60,16 @@ end else begin : gen_piecewise_sig
 
     // The segment is chosen FIRST and only then is the arithmetic done, so this
     // costs one shift/multiply rather than one per segment.
-    localparam int NumSegments          = ternip_pkg::sigmoid_segment_count(SigmoidModel);
-    localparam bit SlopesArePowersOfTwo = ternip_pkg::sigmoid_slopes_are_powers_of_two(SigmoidModel);
+    localparam int NumSegments          = sig_pkg::sigmoid_segment_count(SigmoidModel);
+    localparam bit SlopesArePowersOfTwo = sig_pkg::sigmoid_slopes_are_powers_of_two(SigmoidModel);
     localparam int SlopeFractionBits    = 16;
 
-    localparam ternip_pkg::sigmoid_segment_t [ternip_pkg::MaxSigmoidSegments-1:0] Segments =
-        ternip_pkg::sigmoid_segments(SigmoidModel, FixedPointExponent, SlopeFractionBits);
+    localparam sig_pkg::sigmoid_segment_t [sig_pkg::MaxSigmoidSegments-1:0] Segments =
+        sig_pkg::sigmoid_segments(SigmoidModel, FixedPointExponent, SlopeFractionBits);
     localparam fixed_point_t LastSegmentUpperBound  = Segments[NumSegments-1].upper_bound;
     localparam fixed_point_t FirstSegmentLowerBound = -LastSegmentUpperBound;
 
-    ternip_pkg::sigmoid_segment_t selected_segment;
+    sig_pkg::sigmoid_segment_t selected_segment;
     logic                         input_above_every_segment;
 
     always_comb begin
@@ -87,9 +87,9 @@ end else begin : gen_piecewise_sig
     if (SlopesArePowersOfTwo) begin : gen_right_shift_by_slope
         fixed_point_t truncation_bias;
         assign truncation_bias = (a_i < 0)
-                               ? fixed_point_t'((1 << selected_segment.right_shift) - 1)
+                               ? fixed_point_t'((1 << selected_segment.right_shift_amount) - 1)
                                : '0;
-        assign scaled_input = fixed_point_t'((a_i + truncation_bias) >>> selected_segment.right_shift);
+        assign scaled_input = fixed_point_t'((a_i + truncation_bias) >>> selected_segment.right_shift_amount);
     end else begin : gen_multiply_by_slope
         logic signed [FixedPointPrecision+SlopeFractionBits+1:0] product;
         assign product = selected_segment.scaled_slope * a_i;

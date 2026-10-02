@@ -53,6 +53,10 @@ function automatic integer clamp_int(integer lo, integer x, integer hi);
     return max_int(lo, min_int(x, hi));
 endfunction
 
+function automatic real clamp_real(real lo, real x, real hi);
+    return (x < lo) ? lo : ((x > hi) ? hi : x);
+endfunction
+
 function automatic longint fixed_point_min(integer precision);
     if ((precision < 1) || (precision > $bits(longint)))
         $fatal(1, "fixed_point_min: precision %0d outside representable range [1, %0d]", precision, $bits(longint));
@@ -75,14 +79,10 @@ function automatic real fixed_point2real(longint value, integer exponent);
     return real'(value) * (2.0 ** exponent);
 endfunction
 
-// Saturates to what `precision` bits hold before converting, so a value far outside the
-// range cannot overflow the conversion. Rounds half away from zero, so a value and its
-// negation convert symmetrically.
 function automatic longint real2fixed_point(real value, integer exponent, integer precision);
     real lowest  = real'(fixed_point_min(precision));
     real highest = real'(fixed_point_max(precision));
-    real scaled  = value * (2.0 ** -exponent);
-    return longint'((scaled < lowest) ? lowest : ((scaled > highest) ? highest : scaled));
+    return longint'(clamp_real(lowest, value * (2.0 ** -exponent), highest));
 endfunction
 
 // =========================== //
@@ -96,133 +96,17 @@ typedef enum logic [1:0] {
 } mul_impl_e;
 
 // Piecewise-linear sigmoid approximations, symmetric about (0, 1/2). Each is the
-// minimax fit for its segment count; the POWER2 variants restrict every slope to a
-// power of two so the multiply degrades to a shift. Max |error| vs true sigmoid:
-//   LUT                                 exact (2**FixedPointPrecision entries)
-//   APPROXIMATE_1ST_ORDER               0.056050
-//   APPROXIMATE_3RD_ORDER               0.017376
-//   APPROXIMATE_5TH_ORDER               0.008362
-//   APPROXIMATE_POWER2_SLOPE_1ST_ORDER  0.119203  (the long-standing hard sigmoid)
-//   APPROXIMATE_POWER2_SLOPE_3RD_ORDER  0.034857
-//   APPROXIMATE_POWER2_SLOPE_5TH_ORDER  0.015848
+// minimax fit for its segment count; the POWER2_SLOPE variants restrict every slope to a
+// power of two so the multiply degrades to a shift.
 typedef enum logic [2:0] {
-    SIGMOID_LUT,
-    SIGMOID_APPROXIMATE_1ST_ORDER,
-    SIGMOID_APPROXIMATE_3RD_ORDER,
-    SIGMOID_APPROXIMATE_5TH_ORDER,
-    SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER,
-    SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER,
-    SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER
+    SIGMOID_LUT,                                // Max |error|: exact
+    SIGMOID_APPROXIMATE_1ST_ORDER,              // Max |error|: 0.056050
+    SIGMOID_APPROXIMATE_3RD_ORDER,              // Max |error|: 0.017376
+    SIGMOID_APPROXIMATE_5TH_ORDER,              // Max |error|: 0.008362
+    SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER, // Max |error|: 0.119203  ("hard sigmoid")
+    SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER, // Max |error|: 0.034857
+    SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER  // Max |error|: 0.015848
 } sigmoid_model_e;
-
-function automatic int sigmoid_segment_count(sigmoid_model_e model);
-    case (model)
-        SIGMOID_APPROXIMATE_1ST_ORDER,
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 1;
-        SIGMOID_APPROXIMATE_3RD_ORDER,
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER: return 3;
-        SIGMOID_APPROXIMATE_5TH_ORDER,
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER: return 5;
-        default:                                    return 0;   // LUT
-    endcase
-endfunction
-
-// One segment, in the integer arithmetic the hardware performs: the multiplying
-// models scale by scaled_slope, the POWER2 models shift right by right_shift.
-typedef struct packed {
-    longint upper_bound;
-    longint intercept;
-    longint scaled_slope;
-    int     right_shift;
-} sigmoid_segment_t;
-
-// Upper bound of segment `index`; below segment 0's lower bound the
-// output is 0, at or above the last bound it is 1.
-function automatic real sigmoid_segment_upper_bound(sigmoid_model_e model, int index);
-    case (model)
-        SIGMOID_APPROXIMATE_1ST_ORDER: return 2.823822;
-        SIGMOID_APPROXIMATE_3RD_ORDER:
-            case (index) 0: return -1.652934; 1: return 1.652934; default: return 4.035162; endcase
-        SIGMOID_APPROXIMATE_5TH_ORDER:
-            case (index) 0: return -2.508140; 1: return -1.243333; 2: return 1.243333;
-                         3: return 2.508140; default: return 4.775714; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 2.0;
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
-            case (index) 0: return -1.245525; 1: return 1.245525; default: return 4.263425; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
-            case (index) 0: return -2.559516; 1: return -0.938899; 2: return 0.938899;
-                         3: return 2.559516; default: return 4.565853; endcase
-        default: return 0.0;
-    endcase
-endfunction
-
-function automatic real sigmoid_segment_slope(sigmoid_model_e model, int index);
-    case (model)
-        SIGMOID_APPROXIMATE_1ST_ORDER: return 0.177065;
-        SIGMOID_APPROXIMATE_3RD_ORDER:
-            case (index) 1: return 0.215776; default: return 0.060169; endcase
-        SIGMOID_APPROXIMATE_5TH_ORDER:
-            case (index) 2: return 0.228825; 1, 3: return 0.117462; default: return 0.029515; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 0.25;
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
-            case (index) 1: return 0.25; default: return 0.0625; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
-            case (index) 2: return 0.25; 1, 3: return 0.125; default: return 0.03125; endcase
-        default: return 0.0;
-    endcase
-endfunction
-
-function automatic real sigmoid_segment_intercept(sigmoid_model_e model, int index);
-    case (model)
-        SIGMOID_APPROXIMATE_1ST_ORDER: return 0.5;
-        SIGMOID_APPROXIMATE_3RD_ORDER:
-            case (index) 0: return 0.242793; 1: return 0.5; default: return 0.757207; endcase
-        SIGMOID_APPROXIMATE_5TH_ORDER:
-            case (index) 0: return 0.140956; 1: return 0.361539; 2: return 0.5;
-                         3: return 0.638461; default: return 0.859044; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER: return 0.5;
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER:
-            case (index) 0: return 0.266464; 1: return 0.5; default: return 0.733536; endcase
-        SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER:
-            case (index) 0: return 0.142683; 1: return 0.382638; 2: return 0.5;
-                         3: return 0.617362; default: return 0.857317; endcase
-        default: return 0.0;
-    endcase
-endfunction
-
-function automatic int sigmoid_segment_right_shift(sigmoid_model_e model, int index);
-    for (int right_shift = 0; right_shift < $bits(integer); right_shift++)
-        if ((sigmoid_segment_slope(model, index) * (2.0 ** right_shift)) >= 1.0) return right_shift;
-    return 0;
-endfunction
-
-function automatic bit sigmoid_slopes_are_powers_of_two(sigmoid_model_e model);
-    for (int index = 0; index < sigmoid_segment_count(model); index++)
-        if ((sigmoid_segment_slope(model, index)
-             * (2.0 ** sigmoid_segment_right_shift(model, index))) != 1.0) return 0;
-    return 1;
-endfunction
-
-function automatic sigmoid_segment_t sigmoid_segment(sigmoid_model_e model, int index,
-                                                     integer fixed_point_exponent, integer slope_fraction_bits);
-    return '{
-        upper_bound:  real2fixed_point(sigmoid_segment_upper_bound(model, index), fixed_point_exponent, $bits(longint)),
-        intercept:    real2fixed_point(sigmoid_segment_intercept(model, index), fixed_point_exponent, $bits(longint)),
-        scaled_slope: real2fixed_point(sigmoid_segment_slope(model, index), -slope_fraction_bits, $bits(longint)),
-        right_shift:  sigmoid_segment_right_shift(model, index)
-    };
-endfunction
-
-localparam int MaxSigmoidSegments = sigmoid_segment_count(SIGMOID_APPROXIMATE_5TH_ORDER);
-
-// The whole table, so a module holds it as one localparam and no real reaches its body.
-function automatic sigmoid_segment_t [MaxSigmoidSegments-1:0] sigmoid_segments(
-        sigmoid_model_e model, integer fixed_point_exponent, integer slope_fraction_bits);
-    sigmoid_segments = '0;
-    for (int index = 0; index < sigmoid_segment_count(model); index++)
-        sigmoid_segments[index] =
-            sigmoid_segment(model, index, fixed_point_exponent, slope_fraction_bits);
-endfunction
 
 typedef enum logic [1:0] {
     DIV_BSG,
@@ -234,24 +118,24 @@ typedef enum logic [1:0] {
 // Ternip parameters //
 // ================= //
 typedef struct packed {
-    int unsigned D;
-    int unsigned TmatmulParallelism;
-    int unsigned VectorParallelism;
-    int unsigned LutParallelism;
-    int unsigned FixedPointPrecision;
-    int          FixedPointExponent;
+    int unsigned    D;
+    int unsigned    TmatmulParallelism;
+    int unsigned    VectorParallelism;
+    int unsigned    LutParallelism;
+    int unsigned    FixedPointPrecision;
+    int             FixedPointExponent;
     sigmoid_model_e SigmoidModel;
-    int unsigned BatchSize;
-    int unsigned NumVectorRegisters;
-    int unsigned ImmediateWidth;
-    int unsigned DdrAddressWidth;
-    int unsigned InstructionWidth;
-    int unsigned DdrDataWidth;
-    int unsigned AxiAuxDataWidth;
-    int unsigned InstrFetchWidth;
-    int unsigned CoreInterconnectNumStages;
-    mul_impl_e   MultiplicationImplementation;
-    div_impl_e   DivisionImplementation;
+    int unsigned    BatchSize;
+    int unsigned    NumVectorRegisters;
+    int unsigned    ImmediateWidth;
+    int unsigned    DdrAddressWidth;
+    int unsigned    InstructionWidth;
+    int unsigned    DdrDataWidth;
+    int unsigned    AxiAuxDataWidth;
+    int unsigned    InstrFetchWidth;
+    int unsigned    CoreInterconnectNumStages;
+    mul_impl_e      MultiplicationImplementation;
+    div_impl_e      DivisionImplementation;
 } ternip_cfg_t;
 
 // ================================================================================= //
