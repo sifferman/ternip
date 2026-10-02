@@ -76,12 +76,12 @@ function automatic integer fixed_point_one(integer exponent);
 endfunction
 
 function automatic real fixed_point2real(longint value, integer exponent);
-    return real'(value) * (2.0 ** exponent);
+    return value * (2.0 ** exponent);
 endfunction
 
 function automatic longint real2fixed_point(real value, integer exponent, integer precision);
-    real lowest  = real'(fixed_point_min(precision));
-    real highest = real'(fixed_point_max(precision));
+    real lowest  = fixed_point_min(precision) * 1.0;
+    real highest = fixed_point_max(precision) * 1.0;
     return longint'(clamp_real(lowest, value * (2.0 ** -exponent), highest));
 endfunction
 
