@@ -53,16 +53,16 @@ function automatic integer clamp_int(integer lo, integer x, integer hi);
     return max_int(lo, min_int(x, hi));
 endfunction
 
-function automatic integer fixed_point_min(integer precision);
-    if ((precision < 1) || (precision > $bits(integer)))
-        $fatal(1, "fixed_point_min: precision %0d outside representable range [1, %0d]", precision, $bits(integer));
-    return (1 << (precision-1));
+function automatic longint fixed_point_min(integer precision);
+    if ((precision < 1) || (precision > $bits(longint)))
+        $fatal(1, "fixed_point_min: precision %0d outside representable range [1, %0d]", precision, $bits(longint));
+    return -(64'sd1 <<< (precision-1));
 endfunction
 
-function automatic integer fixed_point_max(integer precision);
-    if ((precision < 1) || (precision > $bits(integer)))
-        $fatal(1, "fixed_point_max: precision %0d outside representable range [1, %0d]", precision, $bits(integer));
-    return (1 << (precision-1)) - 1;
+function automatic longint fixed_point_max(integer precision);
+    if ((precision < 1) || (precision > $bits(longint)))
+        $fatal(1, "fixed_point_max: precision %0d outside representable range [1, %0d]", precision, $bits(longint));
+    return (64'sd1 <<< (precision-1)) - 1;
 endfunction
 
 function automatic integer fixed_point_one(integer exponent);
@@ -71,9 +71,18 @@ function automatic integer fixed_point_one(integer exponent);
     return (1 <<< -exponent);
 endfunction
 
-// Rounds half away from zero, so a table constant and its negation convert symmetrically.
-function automatic longint real_to_fixed_point(real value, integer exponent);
-    return $rtoi((value * (2.0 ** -exponent)) + ((value < 0.0) ? -0.5 : 0.5));
+function automatic real fixed_point2real(longint value, integer exponent);
+    return real'(value) * (2.0 ** exponent);
+endfunction
+
+// Saturates to what `precision` bits hold before converting, so a value far outside the
+// range cannot overflow the conversion. Rounds half away from zero, so a value and its
+// negation convert symmetrically.
+function automatic longint real2fixed_point(real value, integer exponent, integer precision);
+    real lowest  = real'(fixed_point_min(precision));
+    real highest = real'(fixed_point_max(precision));
+    real scaled  = value * (2.0 ** -exponent);
+    return longint'((scaled < lowest) ? lowest : ((scaled > highest) ? highest : scaled));
 endfunction
 
 // =========================== //
@@ -197,9 +206,9 @@ endfunction
 function automatic sigmoid_segment_t sigmoid_segment(sigmoid_model_e model, int index,
                                                      integer fixed_point_exponent, integer slope_fraction_bits);
     return '{
-        upper_bound:  real_to_fixed_point(sigmoid_segment_upper_bound(model, index), fixed_point_exponent),
-        intercept:    real_to_fixed_point(sigmoid_segment_intercept(model, index), fixed_point_exponent),
-        scaled_slope: real_to_fixed_point(sigmoid_segment_slope(model, index), -slope_fraction_bits),
+        upper_bound:  real2fixed_point(sigmoid_segment_upper_bound(model, index), fixed_point_exponent, $bits(longint)),
+        intercept:    real2fixed_point(sigmoid_segment_intercept(model, index), fixed_point_exponent, $bits(longint)),
+        scaled_slope: real2fixed_point(sigmoid_segment_slope(model, index), -slope_fraction_bits, $bits(longint)),
         right_shift:  sigmoid_segment_right_shift(model, index)
     };
 endfunction
