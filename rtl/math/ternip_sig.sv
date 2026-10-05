@@ -66,39 +66,48 @@ end else begin : gen_piecewise_sig
 
     localparam sig_pkg::sigmoid_segment_t [sig_pkg::MaxSigmoidSegments-1:0] Segments =
         sig_pkg::sigmoid_segments(SigmoidModel, FixedPointExponent, SlopeFractionBits);
-    localparam fixed_point_t LastSegmentUpperBound  = Segments[NumSegments-1].upper_bound;
-    localparam fixed_point_t FirstSegmentLowerBound = -LastSegmentUpperBound;
 
-    sig_pkg::sigmoid_segment_t selected_segment;
-    logic                         input_above_every_segment;
+    fixed_point_t selected_intercept;
+    logic [7:0]   selected_shift;
+    longint       selected_slope;
+    logic         below_first_segment;
+    logic         above_last_segment;
 
     always_comb begin
-        selected_segment          = '0;
-        input_above_every_segment = 1;
+        selected_intercept  = '0;
+        selected_shift      = '0;
+        selected_slope      = 0;
+        below_first_segment = 0;
+        above_last_segment  = 1;
         for (int segment_index = NumSegments-1; segment_index >= 0; segment_index--)
-            if (a_i < Segments[segment_index].upper_bound) begin
-                selected_segment          = Segments[segment_index];
-                input_above_every_segment = 0;
+            if (a_i < fixed_point_t'(Segments[segment_index].upper_bound)) begin
+                selected_intercept = fixed_point_t'(Segments[segment_index].intercept);
+                selected_shift     = Segments[segment_index].right_shift_amount;
+                selected_slope     = Segments[segment_index].scaled_slope;
+                above_last_segment = 0;
             end
+        below_first_segment = a_i < -fixed_point_t'(Segments[NumSegments-1].upper_bound);
     end
 
     fixed_point_t scaled_input;
 
-    if (SlopesArePowersOfTwo) begin : gen_right_shift_by_slope
+    if (SlopesArePowersOfTwo) begin : gen_shift_scale
         fixed_point_t truncation_bias;
         assign truncation_bias = (a_i < 0)
-                               ? fixed_point_t'((1 << selected_segment.right_shift_amount) - 1)
+                               ? fixed_point_t'((1 << selected_shift) - 1)
                                : '0;
-        assign scaled_input = fixed_point_t'((a_i + truncation_bias) >>> selected_segment.right_shift_amount);
-    end else begin : gen_multiply_by_slope
+        assign scaled_input = fixed_point_t'((a_i + truncation_bias) >>> selected_shift);
+    end else begin : gen_multiply_scale
         logic signed [FixedPointPrecision+SlopeFractionBits+1:0] product;
-        assign product = selected_segment.scaled_slope * a_i;
+        assign product = selected_slope * a_i;
         assign scaled_input = fixed_point_t'(product / (2 ** SlopeFractionBits));
     end
 
-    assign y_o = (a_i < FirstSegmentLowerBound) ? '0
-               : input_above_every_segment      ? FixedPointOne
-               : scaled_input + fixed_point_t'(selected_segment.intercept);
+    always_comb begin
+        if (below_first_segment)     y_o = '0;
+        else if (above_last_segment) y_o = FixedPointOne;
+        else                         y_o = scaled_input + selected_intercept;
+    end
 
 end
 
