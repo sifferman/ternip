@@ -165,6 +165,17 @@ ternip_loadstore #(
     .debug_o(loadstore_ddr_debug_o)
 );
 
+`ifdef EnableRms
+localparam bit RmsEnabled = `EnableRms;
+`else
+localparam bit RmsEnabled = 1;
+`endif
+`ifdef EnableRowwiseOperation
+localparam bit RowwiseOperationEnabled = `EnableRowwiseOperation;
+`else
+localparam bit RowwiseOperationEnabled = 1;
+`endif
+
 logic                    rowwise_operation_in_ready;
 logic                    rowwise_operation_in_valid;
 ternip_pkg::rowwise_op_e rowwise_operation_in_operation;
@@ -181,6 +192,7 @@ ternip_types#(Cfg)::vector_chunk_t  rowwise_operation_vector_request_w_data;
 
 logic rowwise_operation_vector_read_ready;
 
+if (RowwiseOperationEnabled) begin : gen_rowwise_operation
 ternip_rowwise_operation #(
     .Cfg(Cfg)
 ) rowwise_operation (
@@ -206,6 +218,15 @@ ternip_rowwise_operation #(
     .vector_read_valid_i(vector_read_valid),
     .vector_read_data_i(vector_read_data)
 );
+end else begin : gen_no_rowwise_operation
+    assign rowwise_operation_in_ready                      = 1'b1;
+    assign rowwise_operation_vector_request_valid          = 1'b0;
+    assign rowwise_operation_vector_request_write_not_read = '0;
+    assign rowwise_operation_vector_request_vector_select  = '0;
+    assign rowwise_operation_vector_request_vector_addr    = '0;
+    assign rowwise_operation_vector_request_w_data         = '0;
+    assign rowwise_operation_vector_read_ready             = 1'b0;
+end
 
 logic                               rms_in_ready;
 logic                               rms_in_valid;
@@ -222,6 +243,7 @@ ternip_types#(Cfg)::vector_chunk_t  rms_vector_request_w_data;
 
 logic rms_vector_read_ready;
 
+if (RmsEnabled) begin : gen_rms
 ternip_rms #(
     .Cfg(Cfg)
 ) rms (
@@ -252,6 +274,15 @@ ternip_rms #(
     .rms_value_reciprocal_o(),
     .rms_value_reciprocal_valid_o()
 );
+end else begin : gen_no_rms
+    assign rms_in_ready                      = 1'b1;
+    assign rms_vector_request_valid          = 1'b0;
+    assign rms_vector_request_write_not_read = '0;
+    assign rms_vector_request_vector_select  = '0;
+    assign rms_vector_request_vector_addr    = '0;
+    assign rms_vector_request_w_data         = '0;
+    assign rms_vector_read_ready             = 1'b0;
+end
 
 logic                               tmatmul_in_ready;
 logic                               tmatmul_in_valid;
