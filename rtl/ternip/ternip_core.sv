@@ -165,8 +165,6 @@ ternip_loadstore #(
     .debug_o(loadstore_ddr_debug_o)
 );
 
-localparam bit RmsEnabled = Cfg.EnableRms;
-localparam bit RowwiseOperationEnabled = Cfg.EnableRowwiseOperation;
 
 logic                    rowwise_operation_in_ready;
 logic                    rowwise_operation_in_valid;
@@ -184,7 +182,7 @@ ternip_types#(Cfg)::vector_chunk_t  rowwise_operation_vector_request_w_data;
 
 logic rowwise_operation_vector_read_ready;
 
-if (RowwiseOperationEnabled) begin : gen_rowwise_operation
+if (Cfg.EnableRowwiseOperation) begin : gen_rowwise_operation
 ternip_rowwise_operation #(
     .Cfg(Cfg)
 ) rowwise_operation (
@@ -235,7 +233,7 @@ ternip_types#(Cfg)::vector_chunk_t  rms_vector_request_w_data;
 
 logic rms_vector_read_ready;
 
-if (RmsEnabled) begin : gen_rms
+if (Cfg.EnableRms) begin : gen_rms
 ternip_rms #(
     .Cfg(Cfg)
 ) rms (
