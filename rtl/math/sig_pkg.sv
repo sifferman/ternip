@@ -115,9 +115,9 @@ function automatic int sigmoid_segment_right_shift_amount(sigmoid_model_e model,
 endfunction
 
 function automatic bit sigmoid_slopes_are_powers_of_two(sigmoid_model_e model);
-    return model inside {SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER,
-                         SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER,
-                         SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER};
+    return model == SIGMOID_APPROXIMATE_POWER2_SLOPE_1ST_ORDER
+        || model == SIGMOID_APPROXIMATE_POWER2_SLOPE_3RD_ORDER
+        || model == SIGMOID_APPROXIMATE_POWER2_SLOPE_5TH_ORDER;
 endfunction
 
 function automatic sigmoid_segment_t sigmoid_segment(sigmoid_model_e model, int index,
