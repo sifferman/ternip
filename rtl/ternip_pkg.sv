@@ -136,6 +136,8 @@ typedef struct packed {
     int unsigned    CoreInterconnectNumStages;
     mul_impl_e      MultiplicationImplementation;
     div_impl_e      DivisionImplementation;
+    bit             EnableRms;
+    bit             EnableRowwiseOperation;
 } ternip_cfg_t;
 
 // ================================================================================= //
