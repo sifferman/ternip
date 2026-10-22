@@ -165,16 +165,8 @@ ternip_loadstore #(
     .debug_o(loadstore_ddr_debug_o)
 );
 
-`ifdef EnableRms
 localparam bit RmsEnabled = `EnableRms;
-`else
-localparam bit RmsEnabled = 1;
-`endif
-`ifdef EnableRowwiseOperation
 localparam bit RowwiseOperationEnabled = `EnableRowwiseOperation;
-`else
-localparam bit RowwiseOperationEnabled = 1;
-`endif
 
 logic                    rowwise_operation_in_ready;
 logic                    rowwise_operation_in_valid;
