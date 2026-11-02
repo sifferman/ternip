@@ -33,16 +33,13 @@
 // words into a staging register, emits OutDataWidth chunks, and preserves little
 // endian bit order by shifting low bits out first.
 //
-// Use this to bridge stream widths such as byte streams to vector chunks. Set
-// FastPush when the non-multiple path should immediately move newly staged data
-// toward the output in the same control step.
+// Use this to bridge stream widths such as byte streams to vector chunks.
 
 `define SAFE_CLOG2(x) ( (((x)==1) || ((x)==0))? 1 : $clog2((x)))
 
 module ternip_gearbox_fifo #(
     parameter int InDataWidth = 8,
-    parameter int OutDataWidth = 8,
-    parameter bit FastPush = 0
+    parameter int OutDataWidth = 8
 ) (
     input  logic                    clk_i,
     input  logic                    rst_ni,
@@ -107,110 +104,48 @@ end else if (gcd(InDataWidth, OutDataWidth) == InDataWidth) begin : sipo
 
 end else begin : non_multiple
 
-    // smallest multiple of InDataWidth that is greater than OutDataWidth
-    localparam int StagingWidth =
-        ((OutDataWidth + InDataWidth - 1) / InDataWidth) * InDataWidth;
+    localparam int UnitWidth            = gcd(InDataWidth, OutDataWidth);
+    localparam int UnitsPerInputWord    = InDataWidth/UnitWidth;
+    localparam int UnitsPerOutputWord   = OutDataWidth/UnitWidth;
+    localparam int StagingCapacityUnits = UnitsPerInputWord + UnitsPerOutputWord;
+    localparam int StagingWidth         = StagingCapacityUnits*UnitWidth;
+    localparam int StagingSizeWidth     = `SAFE_CLOG2(StagingCapacityUnits+1);
 
-    logic in_staging_ready;
-    logic in_staging_valid;
-    logic [StagingWidth-1:0] in_staging_data;
+    logic [StagingWidth-1:0]     staging_data_d, staging_data_q;
+    logic [StagingSizeWidth-1:0] staging_size_units_d, staging_size_units_q;
 
-    // https://github.com/bespoke-silicon-group/basejump_stl/blob/a43571d2/bsg_dataflow/bsg_serial_in_parallel_out_full.sv
-    bsg_serial_in_parallel_out_full #(
-        .width_p(InDataWidth),
-        .els_p(StagingWidth / InDataWidth),
-        .hi_to_lo_p(0)
-    ) sipo (
-        .clk_i,
-        .reset_i(!rst_ni),
-
-        .ready_and_o(in_ready_o),
-        .v_i(in_valid_i),
-        .data_i(in_data_i),
-
-        .yumi_i(in_staging_ready && in_staging_valid),
-        .v_o(in_staging_valid),
-        .data_o(in_staging_data)
-    );
-
-    localparam int UnitWidth = gcd(StagingWidth, OutDataWidth);
-    localparam int StagingFull = StagingWidth/UnitWidth;
-    localparam int OutFull = OutDataWidth/UnitWidth;
-
-    logic [StagingWidth-1:0] staging_data_d, staging_data_q;
-    logic [`SAFE_CLOG2(StagingFull+1)-1:0] staging_state_d, staging_state_q;
-    logic [OutDataWidth-1:0] out_data_d, out_data_q;
-    logic [`SAFE_CLOG2(OutFull+1)-1:0] out_state_d, out_state_q;
-
-    logic [`SAFE_CLOG2(StagingFull)-1:0] shift_amount;
+    assign out_valid_o = (staging_size_units_q >= UnitsPerOutputWord);
+    assign out_data_o  = staging_data_q[OutDataWidth-1:0];
+    assign in_ready_o  = staging_size_units_q <= (StagingCapacityUnits-UnitsPerInputWord);
 
     always_comb begin
-        staging_data_d = staging_data_q;
-        staging_state_d = staging_state_q;
-        out_data_d = out_data_q;
-        out_state_d = out_state_q;
+        automatic logic [StagingSizeWidth-1:0] staging_size_units_after_output = staging_size_units_q;
 
-        shift_amount = 'x;
-        if (out_ready_i && out_valid_o) begin // can output
-            out_state_d = 0;
-            out_data_d = '0;
-            if (staging_state_q >= OutFull) begin
-                shift_amount = OutFull;
-            end else begin
-                shift_amount = staging_state_q;
-            end
-            out_data_d = staging_data_q;
-            staging_data_d >>= (UnitWidth*shift_amount);
-            out_state_d += shift_amount;
-            staging_state_d -= shift_amount;
-        end else if (!out_valid_o) begin // cannot output, shift anyways
-            if (staging_state_q+out_state_q > OutFull) begin
-                shift_amount = OutFull-out_state_q;
-            end else begin
-                shift_amount = staging_state_q;
-            end
-            out_data_d = out_data_q | (staging_data_q<<(UnitWidth*out_state_q));
-            staging_data_d >>= (UnitWidth*shift_amount);
-            out_state_d += shift_amount;
-            staging_state_d -= shift_amount;
+        staging_data_d       = staging_data_q;
+        staging_size_units_d = staging_size_units_q;
+
+        if (out_valid_o && out_ready_i) begin
+            staging_data_d                  = staging_data_q >> OutDataWidth;
+            staging_size_units_after_output = (staging_size_units_q - UnitsPerOutputWord);
         end
 
-        in_staging_ready = (staging_state_d == 0);
+        staging_size_units_d = staging_size_units_after_output;
 
-        if (in_staging_ready && in_staging_valid) begin
-            staging_data_d = in_staging_data;
-            staging_state_d = StagingFull;
-
-            if (FastPush) begin
-                if (StagingFull+out_state_d > OutFull) begin
-                    shift_amount = OutFull-out_state_d;
-                end else begin
-                    shift_amount = StagingFull;
-                end
-                out_data_d = out_data_d | (staging_data_d<<(UnitWidth*out_state_d));
-                staging_data_d >>= (UnitWidth*shift_amount);
-                out_state_d += shift_amount;
-                staging_state_d -= shift_amount;
-            end
+        if (in_valid_i && in_ready_o) begin
+            staging_data_d |= StagingWidth'(in_data_i) << (UnitWidth*staging_size_units_after_output);
+            staging_size_units_d = (staging_size_units_after_output + UnitsPerInputWord);
         end
     end
 
     always_ff @(posedge clk_i) begin
         if (!rst_ni) begin
-            staging_data_q <= '0;
-            staging_state_q <= '0;
-            out_data_q <= '0;
-            out_state_q <= '0;
+            staging_data_q       <= '0;
+            staging_size_units_q <= '0;
         end else begin
-            staging_data_q <= staging_data_d;
-            staging_state_q <= staging_state_d;
-            out_data_q <= out_data_d;
-            out_state_q <= out_state_d;
+            staging_data_q       <= staging_data_d;
+            staging_size_units_q <= staging_size_units_d;
         end
     end
-
-    assign out_valid_o = (out_state_q == OutFull);
-    assign out_data_o = out_data_q;
 
 end
 
