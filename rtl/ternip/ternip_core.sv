@@ -181,6 +181,7 @@ ternip_types#(Cfg)::vector_chunk_t  rowwise_operation_vector_request_w_data;
 
 logic rowwise_operation_vector_read_ready;
 
+if (Cfg.EnableRowwiseOperation) begin : gen_rowwise_operation
 ternip_rowwise_operation #(
     .Cfg(Cfg)
 ) rowwise_operation (
@@ -206,6 +207,15 @@ ternip_rowwise_operation #(
     .vector_read_valid_i(vector_read_valid),
     .vector_read_data_i(vector_read_data)
 );
+end else begin : gen_no_rowwise_operation
+    assign rowwise_operation_in_ready                      = 1'b1;
+    assign rowwise_operation_vector_request_valid          = 1'b0;
+    assign rowwise_operation_vector_request_write_not_read = '0;
+    assign rowwise_operation_vector_request_vector_select  = '0;
+    assign rowwise_operation_vector_request_vector_addr    = '0;
+    assign rowwise_operation_vector_request_w_data         = '0;
+    assign rowwise_operation_vector_read_ready             = 1'b0;
+end
 
 logic                               rms_in_ready;
 logic                               rms_in_valid;
@@ -222,6 +232,7 @@ ternip_types#(Cfg)::vector_chunk_t  rms_vector_request_w_data;
 
 logic rms_vector_read_ready;
 
+if (Cfg.EnableRms) begin : gen_rms
 ternip_rms #(
     .Cfg(Cfg)
 ) rms (
@@ -252,6 +263,15 @@ ternip_rms #(
     .rms_value_reciprocal_o(),
     .rms_value_reciprocal_valid_o()
 );
+end else begin : gen_no_rms
+    assign rms_in_ready                      = 1'b1;
+    assign rms_vector_request_valid          = 1'b0;
+    assign rms_vector_request_write_not_read = '0;
+    assign rms_vector_request_vector_select  = '0;
+    assign rms_vector_request_vector_addr    = '0;
+    assign rms_vector_request_w_data         = '0;
+    assign rms_vector_read_ready             = 1'b0;
+end
 
 logic                               tmatmul_in_ready;
 logic                               tmatmul_in_valid;
