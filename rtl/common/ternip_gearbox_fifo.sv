@@ -55,11 +55,15 @@ module ternip_gearbox_fifo #(
 
 function automatic int gcd(int a, int b);
     while (b != 0) begin
-    int t = a % b;
-    a = b;
-    b = t;
+        int t = a % b;
+        a = b;
+        b = t;
     end
     return a;
+endfunction
+
+function automatic int min(int a, int b);
+    return (a < b) ? a : b;
 endfunction
 
 if (gcd(InDataWidth, OutDataWidth) == OutDataWidth) begin : piso
@@ -107,7 +111,8 @@ end else begin : non_multiple
     localparam int UnitWidth            = gcd(InDataWidth, OutDataWidth);
     localparam int UnitsPerInputWord    = InDataWidth/UnitWidth;
     localparam int UnitsPerOutputWord   = OutDataWidth/UnitWidth;
-    localparam int StagingCapacityUnits = UnitsPerInputWord + UnitsPerOutputWord;
+    localparam int StagingCapacityUnits = UnitsPerInputWord + UnitsPerOutputWord
+                                        + min(UnitsPerInputWord, UnitsPerOutputWord) - 1;
     localparam int StagingWidth         = StagingCapacityUnits*UnitWidth;
     localparam int StagingSizeWidth     = `SAFE_CLOG2(StagingCapacityUnits+1);
 
@@ -146,6 +151,68 @@ end else begin : non_multiple
             staging_size_units_q <= staging_size_units_d;
         end
     end
+
+`ifdef FORMAL
+
+    localparam int FvStreamPositionWidth = StagingSizeWidth + 1;
+    typedef logic [FvStreamPositionWidth-1:0] fv_stream_position_t;
+
+    function automatic logic [UnitWidth-1:0] fv_generate_test_pattern(fv_stream_position_t stream_position);
+        localparam int Repeats = UnitWidth / FvStreamPositionWidth + 1;
+        logic [Repeats*FvStreamPositionWidth-1:0] repeated_position = {Repeats{stream_position}};
+        return repeated_position[UnitWidth-1:0];
+    endfunction
+
+    fv_stream_position_t              fv_input_stream_position_q;
+    fv_stream_position_t              fv_output_stream_position_q;
+    logic [FvStreamPositionWidth-1:0] fv_num_units_still_inside_d;
+    logic [FvStreamPositionWidth-1:0] fv_num_units_still_inside_q;
+    logic                             fv_has_started_flowing_q;
+    logic                             fv_never_stalled_by_environment_q;
+    logic [InDataWidth-1:0]           fv_expected_in_data;
+    logic [OutDataWidth-1:0]          fv_expected_out_data;
+
+    always_comb begin
+        for (int i = 0; i < UnitsPerInputWord;  i++)
+            fv_expected_in_data [i*UnitWidth +: UnitWidth] = fv_generate_test_pattern(fv_input_stream_position_q  + i);
+        for (int i = 0; i < UnitsPerOutputWord; i++)
+            fv_expected_out_data[i*UnitWidth +: UnitWidth] = fv_generate_test_pattern(fv_output_stream_position_q + i);
+    end
+
+    always_comb begin
+        fv_num_units_still_inside_d = fv_num_units_still_inside_q;
+        if (in_valid_i  && in_ready_o)  fv_num_units_still_inside_d += UnitsPerInputWord;
+        if (out_valid_o && out_ready_i) fv_num_units_still_inside_d -= UnitsPerOutputWord;
+    end
+
+    wire fv_complete_word_inside = fv_num_units_still_inside_q >= UnitsPerOutputWord;
+    wire fv_smaller_port_ready   = (UnitsPerInputWord < UnitsPerOutputWord) ? in_ready_o : out_valid_o;
+
+    always_ff @(posedge clk_i) begin
+        assume (in_data_i == fv_expected_in_data);
+
+        if (!rst_ni) begin
+            fv_input_stream_position_q        <= '0;
+            fv_output_stream_position_q       <= '0;
+            fv_num_units_still_inside_q       <= '0;
+            fv_has_started_flowing_q          <= 1'b0;
+            fv_never_stalled_by_environment_q <= 1'b1;
+        end else begin
+            if (in_valid_i  && in_ready_o)  fv_input_stream_position_q  <= fv_input_stream_position_q  + UnitsPerInputWord;
+            if (out_valid_o && out_ready_i) fv_output_stream_position_q <= fv_output_stream_position_q + UnitsPerOutputWord;
+            if (fv_smaller_port_ready)      fv_has_started_flowing_q    <= 1'b1;
+
+            fv_num_units_still_inside_q       <= fv_num_units_still_inside_d;
+            fv_never_stalled_by_environment_q <= fv_never_stalled_by_environment_q && in_valid_i && out_ready_i;
+
+            no_lost_or_reordered_data: assert (!(out_valid_o && out_ready_i) || out_data_o == fv_expected_out_data);
+            out_valid_when_word_ready: assert (!fv_complete_word_inside || out_valid_o);
+            no_deadlock:               assert (in_ready_o || out_valid_o);
+            no_wasted_cycles:          assert (!fv_never_stalled_by_environment_q || !fv_has_started_flowing_q || fv_smaller_port_ready);
+        end
+    end
+
+`endif
 
 end
 
