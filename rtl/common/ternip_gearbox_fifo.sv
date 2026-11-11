@@ -209,6 +209,8 @@ end else begin : non_multiple
             out_valid_when_word_ready: assert (!fv_complete_word_inside || out_valid_o);
             no_deadlock:               assert (in_ready_o || out_valid_o);
             no_wasted_cycles:          assert (!fv_never_stalled_by_environment_q || !fv_has_started_flowing_q || fv_smaller_port_ready);
+
+            fv_data_moves: cover (out_valid_o && out_ready_i);
         end
     end
 
